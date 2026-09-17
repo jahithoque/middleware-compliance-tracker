@@ -73,6 +73,10 @@
 
   .maps{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:13px}
   .mapcard{border:1px solid var(--line);padding:11px 12px}
+  .slatable{width:auto}
+  .slatable th,.slatable td{white-space:nowrap}
+  .slatable input[type=number]{min-width:0;width:82px;padding:5px 7px;font-size:13px}
+  .slatable td.band{color:var(--ink);font-weight:500}
   .mapcard .req{font-size:11.5px;color:var(--breach)}
   .mapcard select{width:100%;min-width:0}
   .sample{font-size:11.5px;color:var(--ink-soft);margin-top:6px;
@@ -159,6 +163,8 @@
     </ul>
     <h3>Warnings</h3>
     <p>Where the export reports results numerically, 0 is read as pass, 1 as warning and 2 as failed. Warnings are treated as open findings by default and aged the same way as failures, since a check that did not pass is not evidence of compliance. They are labelled separately everywhere so they can be reported apart from outright failures, and they can be excluded from a run instead — that choice is recorded in the run log and stated in the report.</p>
+    <h3>Remediation SLA</h3>
+    <p>The SLA for a finding depends on its severity and on the network zone of its host, taken from the inventory. The figures are held as a policy table in the tracking file, shown under the tracking file section, and recorded against every run. A finding is past SLA once its age exceeds its figure; it is due soon once it is within a tenth of its SLA, or seven days, whichever is longer. Changing the policy needs a reason and is written to the change log.</p>
     <h3>Baseline findings</h3>
     <p>Failures present on the very first run have no observable start date. They are marked as baseline and dated from the day tracking began. Their true age is older than shown, and they are labelled as such wherever they appear.</p>
     <h3>Scope and coverage</h3>
@@ -179,6 +185,18 @@
     </div>
     <div class="note">Keep this file on a shared drive so everyone works from the same history. It is plain JSON and nothing leaves this machine.</div>
     <div id="stateMsg"></div>
+    <div id="slaWrap" hidden>
+      <div class="divider"></div>
+      <h3 style="font-size:14px;margin:0 0 8px">Remediation SLA policy, days from first found</h3>
+      <div class="scroller"><table class="slatable" id="slaTable"></table></div>
+      <div class="row" style="margin-top:12px">
+        <label class="fld">Named network zones, comma separated<input type="text" id="slaZones" placeholder="DMZ, DRN"></label>
+        <button class="ghost" id="btnSlaApply">Apply policy</button>
+        <button class="quiet" id="btnSlaReset">Reset to standard policy</button>
+      </div>
+      <div class="note">Each finding takes the figure for its severity and the network zone of its host from the inventory. Hosts in any other zone, or not in the inventory, use the last column. Failures with no recognised severity use the row marked other. Warnings use one row whatever their severity. The policy is stored in the tracking file, recorded against every run, and any change is written to the change log with a reason.</div>
+      <div id="slaMsg"></div>
+    </div>
   </div>
 </section>
 
@@ -237,7 +255,6 @@
     <div class="row">
       <label class="fld">Scan date<input type="date" id="runDate"></label>
       <label class="fld">Run by<input type="text" id="operator" placeholder="Your name"></label>
-      <label class="fld">Remediation SLA, days<input type="number" id="slaDays" min="1" max="365" value="30"></label>
       <label class="fld" id="warnWrap" hidden>Warnings<select id="warnMode">
         <option value="finding">Track as findings</option>
         <option value="ignore">Ignore</option></select></label>
@@ -546,12 +563,55 @@ function autoMap(headers, fields){
 }
 
 /* ============================ tracking file ============================ */
+// Remediation SLA policy: days from first found, by severity band and network zone.
+// Warnings use one band regardless of severity. Zones not named, and hosts not in the
+// inventory, use "default". Severities not listed use "Other".
+const SLA_BANDS=[["Critical","Critical"],["High","High"],["Medium","Medium"],["Low","Low"],
+  ["Other","Other or not stated"],["Warning","Warning, any severity"]];
+function standardSlaPolicy(){
+  return { zones:["DMZ","DRN"], rows:{
+    Critical:{ DMZ:60,  DRN:110, default:60 },
+    High:    { DMZ:60,  DRN:110, default:60 },
+    Medium:  { DMZ:120, DRN:180, default:120 },
+    Low:     { DMZ:320, DRN:365, default:320 },
+    Other:   { DMZ:120, DRN:180, default:120 },
+    Warning: { DMZ:730, DRN:730, default:730 } } };
+}
+function uniformSlaPolicy(days){
+  const rows={}; SLA_BANDS.forEach(b=>{ rows[b[0]]={ DMZ:days, DRN:days, default:days }; });
+  return { zones:["DMZ","DRN"], rows };
+}
+function cleanSlaPolicy(p){
+  const std=standardSlaPolicy(), out={ zones:[], rows:{} };
+  const zones=Array.isArray(p&&p.zones)?p.zones:std.zones;
+  zones.forEach(z=>{ z=String(z||"").trim(); if(z && z.toLowerCase()!=="default" && !out.zones.some(x=>lc(x)===lc(z))) out.zones.push(z); });
+  const n=v=>{ v=Math.round(Number(v)); return v>0 ? v : null; };
+  for(const [band] of SLA_BANDS){
+    const src=(p&&p.rows&&Object.prototype.hasOwnProperty.call(p.rows,band))?p.rows[band]:{};
+    const row={ default: n(src.default) || std.rows[band].default };
+    out.zones.forEach(z=>{ row[z]= n(src[z]) || row.default; });
+    out.rows[band]=row;
+  }
+  return out;
+}
+function slaFor(kind,severity,zone){
+  const p=S.state.slaPolicy;
+  const band = kind==="Warning" ? "Warning"
+    : Object.prototype.hasOwnProperty.call(p.rows,severity||"") && severity!=="Other" && severity!=="Warning" ? severity : "Other";
+  const row=p.rows[band], z=p.zones.find(x=>lc(x)===lc(zone));
+  return z!==undefined ? row[z] : row.default;
+}
+function slaSummary(p){
+  return SLA_BANDS.map(([band,label])=>label+": "+p.zones.map(z=>z+" "+p.rows[band][z]).concat(["other "+p.rows[band].default]).join(", ")).join("; ");
+}
+function samePolicy(a,b){ return JSON.stringify(cleanSlaPolicy(a))===JSON.stringify(cleanSlaPolicy(b)); }
+
 function newState(){
   return {
     schema:"middleware-compliance-tracker/2",
     createdAt:new Date().toISOString(),
     trackingStart:todayISO(),
-    slaDays:30,
+    slaPolicy:standardSlaPolicy(),
     inventory:null,
     runs:[],
     findings:{},
@@ -565,7 +625,11 @@ function validateState(o){
   o.runs=Array.isArray(o.runs)?o.runs:[];
   o.findings=(o.findings&&typeof o.findings==="object")?o.findings:{};
   o.changes=Array.isArray(o.changes)?o.changes:[];
-  o.slaDays=Number(o.slaDays)||30;
+  // files written before the policy existed carried one global figure; keep that
+  // behaviour on load rather than silently re-scoring their findings
+  if(o.slaPolicy) o.slaPolicy=cleanSlaPolicy(o.slaPolicy);
+  else o.slaPolicy=uniformSlaPolicy(Number(o.slaDays)||30);
+  delete o.slaDays;
   o.trackingStart=o.trackingStart||todayISO();
   if(o.inventory && !o.inventory.hosts) o.inventory=null;
   return o;
@@ -622,8 +686,6 @@ function merge(){
   const st=S.state;
   const runDate=$("runDate").value||todayISO();
   const operator=$("operator").value.trim()||"unnamed";
-  const slaDays=Math.max(1,parseInt($("slaDays").value,10)||30);
-  st.slaDays=slaDays;
 
   const isFirstRun = st.runs.length===0;
   const m=S.mapping;
@@ -692,7 +754,7 @@ function merge(){
     source:S.sourceName||"pasted rows", rows:S.rows.length, hosts:hostList.length, hostList,
     newFindings:nNew, stillFailing:nStill, remediated:nClosed, reopened:nReopened,
     unreadable:nOther+nSkipped, warnings:nWarn, warningsIgnored:nWarnIgnored, warnMode,
-    codedResults:!!S.statusCodes, slaDays, undo:journal,
+    codedResults:!!S.statusCodes, slaPolicy:JSON.parse(JSON.stringify(st.slaPolicy)), undo:journal,
     inventorySource: st.inventory ? st.inventory.source : null };
   st.runs.push(run);
   // keep the last 10 undo journals only
@@ -726,23 +788,26 @@ function lastRunHosts(){
   return new Set((r && r.hostList) ? r.hostList : []);
 }
 function enrich(){
-  const st=S.state, today=todayISO(), sla=st.slaDays, seen=lastRunHosts();
+  const st=S.state, today=todayISO(), seen=lastRunHosts();
   const anyRun = st.runs.length>0;
   const out=[];
   for(const k in st.findings){
     const f=st.findings[k];
     const endDate = f.state==="open" ? today : (f.remediatedOn||today);
     const age=Math.max(0,daysBetween(f.firstFound,endDate));
-    const over=age-sla;
+    const zone=invAttr(f.host,"zone");
+    const slaDays=slaFor(f.kind||"Failure", f.severity, zone);
+    const over=age-slaDays;
+    const dueWindow=Math.max(7,Math.round(slaDays/10));
     let slaStatus;
     if(f.state!=="open") slaStatus = over>0 ? "Closed late" : "Closed in SLA";
     else if(over>0) slaStatus="Breached";
-    else if(over>-8) slaStatus="Due soon";
+    else if(-over<=dueWindow) slaStatus="Due soon";
     else slaStatus="In SLA";
     const notScanned = anyRun && f.state==="open" && !seen.has(lc(f.host));
-    out.push(Object.assign({ key:k, age, over, slaStatus, bucket:bucketOf(age), notScanned,
+    out.push(Object.assign({ key:k, age, over, slaDays, slaStatus, bucket:bucketOf(age), notScanned,
       owner:invAttr(f.host,"owner"), app:invAttr(f.host,"app"), env:invAttr(f.host,"env"),
-      platform:invAttr(f.host,"platform"), zone:invAttr(f.host,"zone"), mwType:invAttr(f.host,"mwType"),
+      platform:invAttr(f.host,"platform"), zone, mwType:invAttr(f.host,"mwType"),
       inInventory: !!(st.inventory && st.inventory.hosts[lc(f.host)]) }, f, { kind: f.kind||"Failure" }));
   }
   return out;
@@ -788,7 +853,7 @@ function renderFigures(){
   const cov=coverage();
   const figs=[
     { n:open.filter(f=>f.slaStatus==="Breached").length, l:"Past SLA", cls:"breach" },
-    { n:open.filter(f=>f.slaStatus==="Due soon").length, l:"Due within 7 days", cls:"due" },
+    { n:open.filter(f=>f.slaStatus==="Due soon").length, l:"Due soon", cls:"due" },
     { n:open.length, l:"Open findings", cls:"" },
     { n:open.length?Math.round(open.reduce((s,f)=>s+f.age,0)/open.length):0, l:"Mean age, days", cls:"" },
     { n:all.filter(f=>f.state!=="open").length, l:"Remediated", cls:"ok" },
@@ -1058,8 +1123,42 @@ function renderManage(body){
   };
 }
 
+function renderSla(policy){
+  const st=S.state; $("slaWrap").hidden=!st; if(!st) return;
+  const p=policy||st.slaPolicy;
+  $("slaZones").value=p.zones.join(", ");
+  $("slaTable").innerHTML='<thead><tr><th class="nosort">Severity</th>'+
+    p.zones.map(z=>'<th class="nosort">'+esc(z)+'</th>').join("")+'<th class="nosort">Other zones or not inventoried</th></tr></thead><tbody>'+
+    SLA_BANDS.map(([band,label])=>'<tr><td class="band">'+esc(label)+'</td>'+
+      p.zones.concat(["default"]).map(z=>'<td><input type="number" min="1" max="3650" data-band="'+esc(band)+'" data-zone="'+esc(z)+'" value="'+p.rows[band][z]+'"></td>').join("")+'</tr>').join("")+
+    '</tbody>';
+}
+function readSlaTable(){
+  const zones=$("slaZones").value.split(",").map(z=>z.trim()).filter(Boolean);
+  const cur=S.state.slaPolicy, rows={};
+  $("slaTable").querySelectorAll("input[data-band]").forEach(i=>{
+    const r=rows[i.dataset.band]||(rows[i.dataset.band]={}); r[i.dataset.zone]=Number(i.value);
+  });
+  // a zone added by name starts from the current default column
+  for(const b in rows) zones.forEach(z=>{ if(rows[b][z]==null) rows[b][z]=(cur.rows[b]&&cur.rows[b][z])||rows[b].default; });
+  return cleanSlaPolicy({ zones, rows });
+}
+function applySlaPolicy(next,detail){
+  const st=S.state;
+  if(samePolicy(next,st.slaPolicy)){ msg("slaMsg","Policy unchanged.","warn"); renderSla(); return; }
+  let reason="";
+  if(st.runs.length){
+    reason=prompt("Changing the SLA policy re-scores every open finding.\n\nWhy? (recorded in the change log)");
+    if(reason===null){ renderSla(); return; }
+    if(!reason.trim()){ alert("A reason is required."); return; }
+  }
+  st.slaPolicy=next;
+  logChange("sla-policy-changed",(detail||"")+slaSummary(next),reason.trim(),0);
+  msg("slaMsg","Policy applied. Save the tracking file to keep it.","good");
+  renderAll();
+}
 function renderAll(){
-  renderChips(); renderFigures();
+  renderChips(); renderFigures(); renderSla();
   const has=S.state&&S.state.runs.length;
   $("secResults").hidden=!has;
   $("secExport").hidden=!S.state;
@@ -1146,7 +1245,7 @@ function flatRows({ head, rows }){
   return [head].concat(rows.map(r=>r.map(flat)));
 }
 function findingRows(){
-  const st=S.state, sla=st.slaDays, hasInv=!!st.inventory;
+  const st=S.state, hasInv=!!st.inventory;
   const head=["Host","Instance","Rule ID","Rule Name","Result Type","Severity","Test Scope","Additional Data",
     "Status","First Found","Baseline Dated","Last Seen Failing","Last Scan","Age Days","SLA Days","SLA Status",
     "Days Over SLA","Age Bucket","Times Seen","Remediated On","Host Not Scanned","Opened In Run",
@@ -1155,7 +1254,7 @@ function findingRows(){
   const rows=enrich().sort((a,b)=>b.age-a.age).map(f=>[
     f.host, f.instance||"", f.ruleId, f.ruleName||"", f.kind, f.severity||"", f.scope||"", clip(f.aux),
     f.state==="open"?"Open":"Remediated", { d:f.firstFound }, yn(f.baseline), { d:f.lastSeenFail }, { d:f.lastScan },
-    f.age, sla, { v:f.slaStatus, s:slaStyle(f.slaStatus) }, f.over>0?f.over:0, f.bucket, f.occurrences||1,
+    f.age, f.slaDays, { v:f.slaStatus, s:slaStyle(f.slaStatus) }, f.over>0?f.over:0, f.bucket, f.occurrences||1,
     { d:f.remediatedOn }, yn(f.notScanned), f.openedInRun||"",
     f.owner||"", f.app||"", f.env||"", f.platform||"", f.zone||"", f.mwType||"", hasInv?yn(f.inInventory):""
   ]);
@@ -1185,10 +1284,11 @@ function coverageRows(){
 }
 function runRows(){
   const head=["Run","Ran At (UTC)","Scan Date","Run By","Source File","Inventory","Rows","Hosts","New","Still Failing",
-    "Remediated","Reopened","Warnings","Warnings Excluded","Warning Handling","Unreadable","Numeric Results","SLA Days"];
+    "Remediated","Reopened","Warnings","Warnings Excluded","Warning Handling","Unreadable","Numeric Results","SLA Policy"];
   const rows=S.state.runs.map(r=>[r.id, { dt:r.ranAt }, { d:r.scanDate }, r.operator, r.source, r.inventorySource||"", r.rows, r.hosts,
     r.newFindings, r.stillFailing, r.remediated, r.reopened, r.warnings||0, r.warningsIgnored||0,
-    r.warnMode==="ignore"?"Excluded":"Tracked as findings", r.unreadable||0, yn(!!r.codedResults), r.slaDays]);
+    r.warnMode==="ignore"?"Excluded":"Tracked as findings", r.unreadable||0, yn(!!r.codedResults),
+    r.slaPolicy ? slaSummary(cleanSlaPolicy(r.slaPolicy)) : (r.slaDays!=null ? r.slaDays+" days, all findings" : "")]);
   return { head, rows };
 }
 function changeRows(){
@@ -1491,7 +1591,7 @@ function dashboardSheet(){
   [["Source export",run.source],
    ["Inventory",run.inventorySource||"not used"],
    ["Rows read",run.rows+" across "+run.hosts+" hosts"+(run.unreadable?", "+run.unreadable+" ignored as unreadable":"")],
-   ["Remediation SLA",run.slaDays+" days from first found"],
+   ["Remediation SLA","by severity and network zone, days from first found; policy table below"],
    ["Tracking started",st.trackingStart],
    ["Warnings",run.warnMode==="ignore" ? "excluded from this run"+(run.warningsIgnored?" ("+run.warningsIgnored+" rows)":"") : "tracked as findings and aged like failures"]
   ].forEach(m=>put([{ v:m[0], s:ST.muted }, m[1]]));
@@ -1501,7 +1601,7 @@ function dashboardSheet(){
   const sec1=section("Headline",["Measure","Value"],[
     ["Open findings",open.length],
     ["Past SLA",{ v:nBreach, s:ST.breach }],
-    ["Due within 7 days",{ v:nDue, s:ST.due }],
+    ["Due soon",{ v:nDue, s:ST.due }],
     ["In SLA",{ v:nIn, s:ST.ok }],
     ["Open failures",open.filter(f=>f.kind==="Failure").length],
     ["Open warnings",open.filter(f=>f.kind==="Warning").length],
@@ -1513,7 +1613,7 @@ function dashboardSheet(){
     ["Remediated this run",all.filter(f=>f.remediatedOn===run.scanDate).length],
     ["Remediated, all time",all.filter(f=>f.state!=="open").length]
   ]);
-  chart(sec1,{ title:"Open findings by SLA status", dir:"col", cats:["Past SLA","Due within 7 days","In SLA"],
+  chart(sec1,{ title:"Open findings by SLA status", dir:"col", cats:["Past SLA","Due soon","In SLA"],
     catRef:ref(0,sec1.r0+1,sec1.r0+3), pointColors:[C.red,C.amber,C.green],
     series:[{ name:"Open findings", nameRef:hdr(1,sec1), vals:[nBreach,nDue,nIn], ref:ref(1,sec1.r0+1,sec1.r0+3), color:C.teal }] });
 
@@ -1585,12 +1685,17 @@ function dashboardSheet(){
             { name:"Remediated", nameRef:hdr(5,sec6), vals:st.runs.map(x=>x.remediated), ref:ref(5,sec6.r0,sec6.r1), color:C.green },
             { name:"Reopened", nameRef:hdr(6,sec6), vals:st.runs.map(x=>x.reopened), ref:ref(6,sec6.r0,sec6.r1), color:C.amber }] });
 
+  const pol=st.slaPolicy;
+  section("Remediation SLA policy in force, days from first found",["Severity"].concat(pol.zones).concat(["Other zones or not inventoried"]),
+    SLA_BANDS.map(([band,label])=>[label].concat(pol.zones.map(z=>pol.rows[band][z])).concat([pol.rows[band].default])));
+
   put([{ v:"Basis of preparation", s:ST.section }]);
   const notes=[
     "The compliance export carries only the latest scan result. First-found dates are maintained by the tracker: a failure is dated from the run in which it first appeared, keeps that date while it persists, and is closed when the rule next passes.",
     "A finding that fails again after closure starts a new cycle with a new date. The earlier cycle is kept in the tracking file.",
     "Findings present on the first tracked run are marked baseline and dated from "+st.trackingStart+". Their true age is older than shown.",
     "Hosts absent from an export are not treated as remediated. Their findings remain open and the hosts are reported under coverage.",
+    "Each finding is measured against the SLA for its severity and the network zone of its host. A finding is past SLA once its age exceeds that figure, and due soon once it is within a tenth of the figure or seven days, whichever is longer.",
     run.codedResults ? "Results in the source export are numeric: 0 is read as pass, 1 as warning and 2 as failed." : "",
     run.warnMode==="ignore" ? "Warnings were excluded from this run at the preparer's direction." : "Warnings are tracked as findings and aged on the same basis as failures; they are labelled separately throughout.",
     "Corrections (run reversals, removals, inventory reloads) are on the Changes sheet with operator, date and reason. Every mapped export and inventory field is on the Findings sheet."
@@ -1670,12 +1775,12 @@ function finalReport(){
     '<div>Inventory: '+esc(run.inventorySource||"not used")+'</div>'+
     '<div>Prepared by: '+esc(run.operator)+'</div>'+
     '<div>Rows read: '+run.rows+' across '+run.hosts+' hosts'+(run.unreadable?', '+run.unreadable+' ignored as unreadable':'')+'</div>'+
-    '<div>Remediation SLA: '+run.slaDays+' days from first found</div>'+
+    '<div>Remediation SLA: by severity and network zone, days from first found (policy in basis of preparation)</div>'+
     '<div>Tracking started: '+esc(st.trackingStart)+' · run '+run.id+' of '+st.runs.length+'</div>'+
   '</div>'+
   '<div class="figs">'+
     '<div class="f"><b class="r">'+breach.length+'</b><span>Past SLA</span></div>'+
-    '<div class="f"><b class="o">'+open.filter(f=>f.slaStatus==="Due soon").length+'</b><span>Due within 7 days</span></div>'+
+    '<div class="f"><b class="o">'+open.filter(f=>f.slaStatus==="Due soon").length+'</b><span>Due soon</span></div>'+
     '<div class="f"><b>'+open.filter(f=>f.kind==="Failure").length+'</b><span>Open failures</span></div>'+
     '<div class="f"><b class="o">'+open.filter(f=>f.kind==="Warning").length+'</b><span>Open warnings</span></div>'+
     '<div class="f"><b>'+newThisRun.length+'</b><span>New this run</span></div>'+
@@ -1718,6 +1823,10 @@ function finalReport(){
       ? 'Warnings were excluded from this run at the preparer\u2019s direction'+(run.warningsIgnored?' ('+run.warningsIgnored+' rows)':'')+'.'
       : 'Warnings are tracked as findings and aged on the same basis as failures, and are shown separately throughout.')+'</p>':'')+
   '<p>Findings present on the first tracked run are marked baseline and dated from '+esc(st.trackingStart)+'. Their true age is older than shown. Hosts absent from an export are not treated as remediated; their findings remain open and the hosts are reported under coverage.</p>'+
+  '<h3>Remediation SLA policy in force, days from first found</h3>'+
+  t(["Severity"].concat(st.slaPolicy.zones).concat(["Other zones or not inventoried"]),
+    SLA_BANDS.map(([band,label])=>[label].concat(st.slaPolicy.zones.map(z=>st.slaPolicy.rows[band][z])).concat([st.slaPolicy.rows[band].default])))+
+  '<p>Each finding is measured against the figure for its severity and the network zone of its host from the inventory. It is past SLA once its age exceeds that figure, and due soon once within a tenth of the figure or seven days, whichever is longer.</p>'+
   (st.changes.length?'<h3>Corrections recorded</h3>'+
     t(["When","By","Action","Detail","Count","Reason"],
       st.changes.slice(-30).reverse().map(c=>[c.at.slice(0,16).replace("T"," "),c.operator,c.kind,c.detail,c.count,c.reason])):'')+
@@ -1761,7 +1870,6 @@ $("stateInput").onchange=async e=>{
 function applyState(obj,name){
   try{
     S.state=validateState(obj); S.selected.clear();
-    $("slaDays").value=S.state.slaDays;
     $("st1").className="step done"; $("secInv").hidden=false;
     if(S.state.inventory){ $("st2").className="step done"; $("secImport").hidden=false; }
     const last=S.state.runs[S.state.runs.length-1];
@@ -1875,7 +1983,9 @@ $("tabs").onclick=e=>{
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t===b));
   renderTab();
 };
-$("slaDays").onchange=()=>{ if(S.state){ S.state.slaDays=Math.max(1,parseInt($("slaDays").value,10)||30); renderAll(); } };
+$("btnSlaApply").onclick=()=>applySlaPolicy(readSlaTable(),"");
+$("btnSlaReset").onclick=()=>applySlaPolicy(standardSlaPolicy(),"Reset to standard policy. ");
+$("slaZones").onchange=()=>renderSla(readSlaTable());   // preview only; Apply commits
 window.addEventListener("beforeunload",e=>{ if(S.state&&S.state.runs.length){ e.preventDefault(); e.returnValue=""; } });
 </script>
 </body>

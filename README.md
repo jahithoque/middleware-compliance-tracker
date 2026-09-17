@@ -13,7 +13,7 @@ Compliance platforms commonly export a flat list of host, rule ID, rule name and
 - Reads a raw compliance export: CSV, TSV, Excel (.xlsx/.xlsm), or text pasted from the screen
 - Joins it to a device inventory to carry owner, application, environment, platform, network zone and middleware type onto every finding
 - Assigns and preserves first-found dates across runs, closes findings when the rule passes, and opens a new cycle when a closed finding fails again
-- Ages every open finding against a configurable SLA and reports breaches, near-breaches and ageing buckets
+- Ages every open finding against an SLA policy set by severity and network zone, and reports breaches, near-breaches and ageing buckets
 - Reports scan coverage: inventory hosts missing from a run, inventory hosts never scanned in any run, and scanned hosts absent from the inventory
 - Builds an Excel workbook per run: a dashboard sheet with native charts, a findings sheet carrying every mapped export and inventory field, scan coverage, the run log and the change log, each as an Excel table ready for pivots
 - Builds a standalone HTML report per run, including a basis-of-preparation section
@@ -34,7 +34,7 @@ Compliance platforms commonly export a flat list of host, rule ID, rule name and
 2. Open an existing tracking file, or start a new one.
 3. Load the device inventory. It is stored inside the tracking file and only needs reloading when it changes.
 4. Load the raw compliance export. Columns are matched automatically and can be corrected. Host, rule ID and result are required; rule name, severity, last scan date, instance, test scope and additional data are carried through when present.
-5. Set the scan date, operator and SLA, then load the run.
+5. Check the remediation SLA policy under the tracking file section, set the scan date and operator, then load the run.
 6. Save the tracking file, then build the Excel workbook or the HTML report.
 
 ### Result values
@@ -44,6 +44,10 @@ Text results (`Pass`, `Failed`, `Non-Compliant`, `Warning`, and similar) are rec
 ### Instances
 
 Middleware exports often carry an instance column: a queue manager, an application server, a site. When one is mapped, a finding is identified by host, rule and instance together, so two instances on one host failing the same rule are tracked separately. Files created without an instance column keep working unchanged.
+
+### Remediation SLA
+
+The SLA is a table of days by severity and by the network zone of the host, taken from the inventory. Zones are named in the policy; anything else, including hosts missing from the inventory, uses a default column. Warnings have one figure regardless of severity. The policy lives in the tracking file, is recorded against every run, and is printed in the report and the workbook. Changing it once runs are loaded requires a reason, which goes into the change log.
 
 ### Dating rules
 
@@ -66,7 +70,7 @@ Plain JSON, human-readable, diffable:
 {
   "schema": "middleware-compliance-tracker/2",
   "trackingStart": "YYYY-MM-DD",
-  "slaDays": 30,
+  "slaPolicy": { "zones": [ ... ], "rows": { ... } },
   "inventory": { "hosts": { ... }, "fields": { ... } },
   "runs":     [ { "id": 1, "scanDate": "...", "operator": "...", "undo": [ ... ] } ],
   "findings": { "host\u0000ruleid": { "firstFound": "...", "state": "open", ... } },
