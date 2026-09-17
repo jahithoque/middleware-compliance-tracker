@@ -1207,7 +1207,7 @@ const NS_R="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 const NS_REL="http://schemas.openxmlformats.org/package/2006/relationships";
 const RT="http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
 const CT_SS="application/vnd.openxmlformats-officedocument.spreadsheetml.";
-const xe=s=>esc(s).replace(/[ --]/g,"");
+const xe=s=>esc(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,"");
 function colLetter(n){ let s=""; n++; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26); } return s; }
 function isoToSerial(iso){ return Math.round(Date.UTC(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10))/86400000)+25569; }
 function dtToSerial(iso){ const t=Date.parse(iso); return isNaN(t)?null:t/86400000+25569; }
