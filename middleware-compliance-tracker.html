@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Middleware compliance tracker</title>
+<style>
+  :root{
+    --paper:#F1F2EF; --panel:#FFFFFF; --ink:#14181F; --ink-soft:#5B6472;
+    --line:#D8DBD4; --line-strong:#B9BEB4; --accent:#14504F; --accent-soft:#E4EDEB;
+    --breach:#A4262C; --due:#8A5A00; --ok:#14634A; --base:#5B6472;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+    font-size:15px;line-height:1.5;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1220px;margin:0 auto;padding:28px 20px 80px}
+
+  header.top{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:24px;
+    display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;justify-content:space-between}
+  header.top h1{font-size:26px;font-weight:650;letter-spacing:-0.02em;margin:0 0 3px}
+  header.top p{margin:0;color:var(--ink-soft);font-size:13.5px;max-width:60ch}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .statechip{font-size:12.5px;padding:5px 11px;border:1px solid var(--line-strong);
+    border-radius:2px;background:var(--panel);white-space:nowrap}
+  .statechip.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+
+  .figures{display:none;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:1px;
+    background:var(--line);border:1px solid var(--line);margin-bottom:24px}
+  .figures.show{display:grid}
+  .fig{background:var(--panel);padding:15px 17px}
+  .fig .n{font-size:32px;font-weight:600;letter-spacing:-0.03em;line-height:1.05}
+  .fig .l{font-size:12.5px;color:var(--ink-soft);margin-top:4px}
+  .fig.breach .n{color:var(--breach)} .fig.due .n{color:var(--due)} .fig.ok .n{color:var(--ok)}
+
+  section{background:var(--panel);border:1px solid var(--line);margin-bottom:16px}
+  .shead{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--line)}
+  .step{width:23px;height:23px;flex:none;border:1px solid var(--line-strong);border-radius:50%;
+    display:grid;place-items:center;font-size:12.5px;color:var(--ink-soft)}
+  .step.done{background:var(--accent);border-color:var(--accent);color:#fff}
+  .step.skip{background:var(--paper)}
+  .shead h2{font-size:15.5px;font-weight:600;margin:0;letter-spacing:-0.01em}
+  .shead .hint{margin-left:auto;font-size:12.5px;color:var(--ink-soft);text-align:right}
+  .sbody{padding:18px}
+
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+  .row + .row{margin-top:12px}
+
+  button{font:inherit;font-size:14px;padding:8px 15px;border:1px solid var(--ink);
+    background:var(--ink);color:#fff;border-radius:2px;cursor:pointer}
+  button:hover{background:#000}
+  button.ghost{background:var(--panel);color:var(--ink)} button.ghost:hover{background:var(--paper)}
+  button.quiet{background:var(--panel);color:var(--ink-soft);border-color:var(--line-strong)}
+  button.quiet:hover{color:var(--ink);border-color:var(--ink)}
+  button.danger{background:var(--panel);color:var(--breach);border-color:#E3BFC1}
+  button.danger:hover{background:#FBEEEE;border-color:var(--breach)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,.tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  label.fld{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--ink-soft)}
+  select,input[type=text],input[type=date],input[type=number]{font:inherit;font-size:14px;padding:7px 9px;
+    border:1px solid var(--line-strong);border-radius:2px;background:var(--panel);color:var(--ink);min-width:150px}
+  textarea{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;width:100%;
+    min-height:110px;padding:10px;border:1px solid var(--line-strong);border-radius:2px;background:var(--panel);color:var(--ink);resize:vertical}
+  .drop{border:1.5px dashed var(--line-strong);border-radius:3px;padding:22px;text-align:center;
+    color:var(--ink-soft);font-size:14px;cursor:pointer;background:var(--paper)}
+  .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+  .note{font-size:12.5px;color:var(--ink-soft);margin-top:10px;max-width:80ch}
+  .warn{border-left:3px solid var(--due);background:#FDF7EC;padding:10px 13px;font-size:13px;margin-top:12px}
+  .err{border-left:3px solid var(--breach);background:#FBEEEE;padding:10px 13px;font-size:13px;margin-top:12px}
+  .good{border-left:3px solid var(--ok);background:#EDF5F1;padding:10px 13px;font-size:13px;margin-top:12px}
+
+  .maps{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:13px}
+  .mapcard{border:1px solid var(--line);padding:11px 12px}
+  .mapcard .req{font-size:11.5px;color:var(--breach)}
+  .mapcard select{width:100%;min-width:0}
+  .sample{font-size:11.5px;color:var(--ink-soft);margin-top:6px;
+    font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .tabs{display:flex;border-bottom:1px solid var(--line);overflow-x:auto}
+  .tab{font:inherit;font-size:13.5px;padding:10px 15px;border:0;background:none;color:var(--ink-soft);
+    cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+  .tab.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+  .scroller{overflow:auto;max-height:520px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{text-align:left;padding:7px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{position:sticky;top:0;background:var(--paper);font-weight:600;font-size:12px;color:var(--ink-soft);
+    border-bottom:1px solid var(--line-strong);cursor:pointer;z-index:1}
+  th:hover{color:var(--ink)} th.nosort{cursor:default}
+  tbody tr:hover{background:var(--paper)}
+  tbody tr.sel{background:var(--accent-soft)}
+  td.name{white-space:normal;min-width:240px;max-width:430px}
+  td.chk,th.chk{width:34px;padding-right:0}
+  .pill{font-size:11.5px;padding:2px 7px;border-radius:2px;border:1px solid}
+  .p-breach{color:var(--breach);border-color:#E3BFC1;background:#FBEEEE}
+  .p-due{color:var(--due);border-color:#E7D5AE;background:#FDF7EC}
+  .p-ok{color:var(--ok);border-color:#BEDACD;background:#EDF5F1}
+  .p-base{color:var(--base);border-color:var(--line-strong);background:var(--paper)}
+  .filters{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);align-items:center}
+  .filters input[type=text]{min-width:200px}
+  .count{font-size:12.5px;color:var(--ink-soft);margin-left:auto}
+  .empty{padding:34px;text-align:center;color:var(--ink-soft);font-size:14px}
+  .bar{display:flex;flex-wrap:wrap;gap:9px;align-items:center;padding:11px 14px;background:var(--paper);border-bottom:1px solid var(--line)}
+  .panelbody{padding:18px}
+  .panelbody h3{font-size:14px;margin:0 0 6px}
+  .panelbody h3 + p{margin-top:0}
+  .panelbody p{color:var(--ink-soft);font-size:13px;max-width:80ch;margin:0 0 10px}
+  .divider{border-top:1px solid var(--line);margin:18px 0}
+
+  details.method{border:1px solid var(--line);background:var(--panel);margin-bottom:16px}
+  details.method summary{padding:13px 18px;cursor:pointer;font-weight:600;font-size:14.5px}
+  details.method .mbody{padding:0 18px 18px;font-size:13.5px;color:var(--ink-soft);max-width:80ch}
+  details.method .mbody h3{font-size:13.5px;color:var(--ink);margin:16px 0 5px}
+  details.method .mbody p{margin:0 0 8px}
+  details.method .mbody ul{margin:0 0 8px;padding-left:20px}
+
+  @media print{
+    body{background:#fff}
+    .wrap{max-width:none;padding:0}
+    button,.drop,.filters,.tabs,.bar,details.method summary{display:none}
+    section,.figures{break-inside:avoid}
+    .scroller{max-height:none;overflow:visible}
+  }
+  @media (max-width:640px){
+    .wrap{padding:18px 13px 60px}
+    .fig .n{font-size:26px}
+    th,td{padding:6px 8px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>Middleware compliance tracker</h1>
+    <p>Joins the compliance export to the device inventory, keeps first-found dates and SLA ageing in a file you control, and produces the report for each run.</p>
+  </div>
+  <div class="chips">
+    <div class="statechip" id="stateChip">No tracking file</div>
+    <div class="statechip" id="invChip">No inventory</div>
+  </div>
+</header>
+
+<div class="figures" id="figures"></div>
+
+<details class="method">
+  <summary>How findings are dated, aged and scoped</summary>
+  <div class="mbody">
+    <p>The compliance export carries only the latest scan result, so ageing cannot be derived from it. This tool keeps its own record, keyed on host and rule, and updates that record each time an export is loaded.</p>
+    <h3>Dating rules</h3>
+    <ul>
+      <li>A failure seen for the first time is recorded with the run's scan date as its first-found date.</li>
+      <li>A failure already on record keeps its original first-found date, however many times it reappears.</li>
+      <li>A rule that moves from fail to pass is closed and stamped with the run date.</li>
+      <li>A closed finding that fails again opens a new cycle with a new first-found date. The earlier cycle is kept in the history.</li>
+      <li>A host absent from an export is not treated as remediated. Its findings stay open and the host is reported as not scanned.</li>
+    </ul>
+    <h3>Warnings</h3>
+    <p>Where the export reports results numerically, 0 is read as pass, 1 as warning and 2 as failed. Warnings are treated as open findings by default and aged the same way as failures, since a check that did not pass is not evidence of compliance. They are labelled separately everywhere so they can be reported apart from outright failures, and they can be excluded from a run instead — that choice is recorded in the run log and stated in the report.</p>
+    <h3>Baseline findings</h3>
+    <p>Failures present on the very first run have no observable start date. They are marked as baseline and dated from the day tracking began. Their true age is older than shown, and they are labelled as such wherever they appear.</p>
+    <h3>Scope and coverage</h3>
+    <p>The inventory defines the population. Inventory hosts that never appear in an export are reported as never scanned; hosts in an export that are absent from the inventory are reported as not inventoried. Neither is silently dropped.</p>
+    <h3>Corrections</h3>
+    <p>A run loaded in error can be reverted, which restores every finding to its state before that run. Findings can also be removed individually or by host. Every correction is written to the change log with its date, operator and stated reason.</p>
+  </div>
+</details>
+
+<section>
+  <div class="shead"><span class="step" id="st1">1</span><h2>Tracking file</h2>
+    <span class="hint" id="h1">Holds every finding, its dates, and the change log</span></div>
+  <div class="sbody">
+    <div class="row">
+      <button class="ghost" id="btnOpenState">Open tracking file</button>
+      <button class="quiet" id="btnNewState">Start a new one</button>
+      <input type="file" id="stateInput" accept=".json,application/json" hidden>
+    </div>
+    <div class="note">Keep this file on a shared drive so everyone works from the same history. It is plain JSON and nothing leaves this machine.</div>
+    <div id="stateMsg"></div>
+  </div>
+</section>
+
+<section id="secInv" hidden>
+  <div class="shead"><span class="step" id="st2">2</span><h2>Device inventory</h2>
+    <span class="hint" id="h2">Defines the population and carries owner and application detail</span></div>
+  <div class="sbody">
+    <div class="drop" id="invDrop">Drop the inventory report here, or click to choose a file</div>
+    <input type="file" id="invInput" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
+    <div id="invMapWrap" hidden style="margin-top:16px">
+      <div class="maps" id="invMaps"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="ghost" id="btnInvApply">Use this inventory</button>
+        <button class="quiet" id="btnInvCancel">Cancel</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="quiet" id="btnInvSkip">Continue without inventory</button>
+      <button class="danger" id="btnInvClear" hidden>Remove stored inventory</button>
+    </div>
+    <div class="note">The inventory is stored in the tracking file, so it only needs reloading when it changes. Every column is kept and carried into the report.</div>
+    <div id="invMsg"></div>
+  </div>
+</section>
+
+<section id="secImport" hidden>
+  <div class="shead"><span class="step" id="st3">3</span><h2>Raw compliance export</h2>
+    <span class="hint">CSV, Excel, or text pasted from the screen</span></div>
+  <div class="sbody">
+    <div class="drop" id="drop">Drop the raw export here, or click to choose a file</div>
+    <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
+    <div class="row" style="margin-top:12px">
+      <button class="quiet" id="btnPasteToggle">Paste instead</button>
+    </div>
+    <div id="pasteBox" hidden style="margin-top:10px">
+      <textarea id="pasteArea" placeholder="Paste the rows here, including the header line."></textarea>
+      <div class="row" style="margin-top:8px"><button class="ghost" id="btnPasteLoad">Read pasted rows</button></div>
+    </div>
+    <div id="importMsg"></div>
+  </div>
+</section>
+
+<section id="secMap" hidden>
+  <div class="shead"><span class="step" id="st4">4</span><h2>Columns</h2>
+    <span class="hint" id="h4">Matched automatically — change anything that looks wrong</span></div>
+  <div class="sbody">
+    <div class="maps" id="maps"></div>
+    <div id="mapMsg"></div>
+  </div>
+</section>
+
+<section id="secRun" hidden>
+  <div class="shead"><span class="step" id="st5">5</span><h2>Run details</h2>
+    <span class="hint">Written to the run log against this load</span></div>
+  <div class="sbody">
+    <div class="row">
+      <label class="fld">Scan date<input type="date" id="runDate"></label>
+      <label class="fld">Run by<input type="text" id="operator" placeholder="Your name"></label>
+      <label class="fld">Remediation SLA, days<input type="number" id="slaDays" min="1" max="365" value="30"></label>
+      <label class="fld" id="warnWrap" hidden>Warnings<select id="warnMode">
+        <option value="finding">Track as findings</option>
+        <option value="ignore">Ignore</option></select></label>
+    </div>
+    <div class="row">
+      <button id="btnMerge">Load this run</button>
+      <span class="note" style="margin:0" id="mergePreview"></span>
+    </div>
+    <div id="runMsg"></div>
+  </div>
+</section>
+
+<section id="secResults" hidden>
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-tab="findings">Findings</button>
+    <button class="tab" data-tab="coverage">Coverage</button>
+    <button class="tab" data-tab="groups">By owner</button>
+    <button class="tab" data-tab="hosts">Hosts</button>
+    <button class="tab" data-tab="rules">Rules</button>
+    <button class="tab" data-tab="runs">Run log</button>
+    <button class="tab" data-tab="manage">Corrections</button>
+  </div>
+  <div id="tabbody"></div>
+</section>
+
+<section id="secExport" hidden>
+  <div class="shead"><span class="step done">✓</span><h2>Save and export</h2></div>
+  <div class="sbody">
+    <div class="row">
+      <button id="btnSaveState">Save tracking file</button>
+      <button class="ghost" id="btnReport">Build final report</button>
+      <button class="ghost" id="btnCsvFindings">Findings sheet, CSV</button>
+      <button class="quiet" id="btnCsvCoverage">Coverage, CSV</button>
+      <button class="quiet" id="btnCsvRuns">Run log, CSV</button>
+    </div>
+    <div class="note">Save the tracking file every time, or this run's dates are lost. The findings sheet keeps a fixed column order so it pastes straight into the data sheet of the existing workbook. The final report is a standalone HTML file covering the run just loaded.</div>
+    <div id="exportMsg"></div>
+  </div>
+</section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ============================ state ============================ */
+const S = {
+  state:null, stateHandle:null,
+  rows:[], headers:[], mapping:{}, sourceName:"",
+  invGrid:null, invHeaders:[], invMapping:{}, invSource:"",
+  lastMerge:null, tab:"findings", statusCodes:false, warnMode:"finding",
+  sort:{ key:"age", dir:-1 },
+  filter:{ text:"", status:"open", sla:"all", run:"all" },
+  selected:new Set()
+};
+
+const FIELDS = [
+  { key:"host", label:"Host", required:true,
+    hints:["host","hostname","computer","computername","device","machine","asset","endpoint","fqdn","server","system name","node"] },
+  { key:"ruleId", label:"Rule ID", required:true,
+    hints:["rule id","ruleid","rule_id","check id","checkid","control id","ccdid","id","standard id","benchmark id"] },
+  { key:"ruleName", label:"Rule name", required:false,
+    hints:["rule name","rulename","rule","check name","name","title","description","control","check"] },
+  { key:"status", label:"Result", required:true,
+    hints:["status","result","state","compliance","compliant","pass/fail","passfail","outcome","finding"] },
+  { key:"severity", label:"Severity", required:false,
+    hints:["severity","risk","criticality","priority","impact","level"] },
+  { key:"lastScan", label:"Last scan date", required:false,
+    hints:["last scan","lastscan","scan date","scandate","last seen","lastseen","timestamp","date","checked","evaluated"] }
+];
+
+const INV_FIELDS = [
+  { key:"host", label:"Host", required:true,
+    hints:["host","hostname","computer","computername","device","machine","asset","server","fqdn","node","system name"] },
+  { key:"owner", label:"Owner or support group", required:false,
+    hints:["owner","support group","assignment group","custodian","team","responsible","managed by","contact"] },
+  { key:"app", label:"Application or service", required:false,
+    hints:["application","app","service","business service","system","platform","middleware","product"] },
+  { key:"env", label:"Environment", required:false,
+    hints:["environment","env","tier","stage","zone","classification"] },
+  { key:"status", label:"Lifecycle status", required:false,
+    hints:["status","state","lifecycle","operational status","install status","active"] }
+];
+
+const $ = id => document.getElementById(id);
+const todayISO = () => new Date().toISOString().slice(0,10);
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const lc = s => String(s==null?"":s).trim().toLowerCase();
+function msg(el,text,kind){ const b=$(el); b.innerHTML = text ? '<div class="'+(kind||"warn")+'">'+esc(text)+'</div>' : ""; }
+function daysBetween(a,b){ return Math.round((new Date(b+"T00:00:00Z")-new Date(a+"T00:00:00Z"))/86400000); }
+
+/* ============================ parsing ============================ */
+function sniffDelimiter(text){
+  const line = text.split(/\r?\n/).find(l=>l.trim().length) || "";
+  let best=",", n=-1;
+  for(const c of ["\t",",",";","|"]){ const k=line.split(c).length; if(k>n){n=k;best=c;} }
+  return best;
+}
+function parseDelimited(text,delim){
+  const d = delim || sniffDelimiter(text);
+  const rows=[]; let row=[], field="", q=false, i=0;
+  while(i<text.length){
+    const ch=text[i];
+    if(q){
+      if(ch==='"'){ if(text[i+1]==='"'){ field+='"'; i+=2; continue; } q=false; i++; continue; }
+      field+=ch; i++; continue;
+    }
+    if(ch==='"'){ q=true; i++; continue; }
+    if(ch===d){ row.push(field); field=""; i++; continue; }
+    if(ch==="\n"){ row.push(field); rows.push(row); row=[]; field=""; i++; continue; }
+    if(ch==="\r"){ i++; continue; }
+    field+=ch; i++;
+  }
+  if(field.length||row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=>r.some(c=>String(c).trim().length));
+}
+function rowsToObjects(grid){
+  if(!grid.length) return { headers:[], rows:[] };
+  let hIdx=0;
+  for(let i=0;i<Math.min(grid.length,12);i++){
+    const filled = grid[i].filter(c=>String(c).trim().length).length;
+    if(filled >= Math.max(2, Math.floor(grid[i].length*0.6))){ hIdx=i; break; }
+  }
+  const raw = grid[hIdx].map((h,i)=> String(h).trim() || ("Column "+(i+1)));
+  const seen={}; const headers = raw.map(h=>{ if(seen[h]==null){seen[h]=1;return h;} seen[h]++; return h+" ("+seen[h]+")"; });
+  const rows=[];
+  for(let i=hIdx+1;i<grid.length;i++){
+    const o={}; headers.forEach((h,j)=> o[h] = String(grid[i][j]==null?"":grid[i][j]).trim());
+    if(Object.values(o).some(v=>v.length)) rows.push(o);
+  }
+  return { headers, rows };
+}
+
+/* ============================ xlsx ============================ */
+async function inflateRaw(bytes){
+  if(typeof DecompressionStream === "undefined") throw new Error("nodecomp");
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function unzip(buf){
+  const dv=new DataView(buf), u8=new Uint8Array(buf);
+  let eocd=-1;
+  for(let i=u8.length-22;i>=Math.max(0,u8.length-66000);i--){ if(dv.getUint32(i,true)===0x06054b50){ eocd=i; break; } }
+  if(eocd<0) throw new Error("Not a valid Excel file.");
+  const count=dv.getUint16(eocd+10,true); let off=dv.getUint32(eocd+16,true);
+  const entries={}, dec=new TextDecoder();
+  for(let n=0;n<count;n++){
+    if(dv.getUint32(off,true)!==0x02014b50) break;
+    const method=dv.getUint16(off+10,true), csize=dv.getUint32(off+20,true);
+    const nameLen=dv.getUint16(off+28,true), extraLen=dv.getUint16(off+30,true), cmtLen=dv.getUint16(off+32,true);
+    const lho=dv.getUint32(off+42,true);
+    entries[dec.decode(u8.subarray(off+46,off+46+nameLen))]={method,csize,lho};
+    off += 46+nameLen+extraLen+cmtLen;
+  }
+  return {
+    names:Object.keys(entries),
+    async read(name){
+      const e=entries[name]; if(!e) return null;
+      const ln=dv.getUint16(e.lho+26,true), le=dv.getUint16(e.lho+28,true);
+      const start=e.lho+30+ln+le, data=u8.subarray(start,start+e.csize);
+      return new TextDecoder().decode(e.method===0 ? data : await inflateRaw(data));
+    }
+  };
+}
+function colToIndex(ref){
+  const m=/^([A-Z]+)/.exec(ref||""); if(!m) return 0;
+  let n=0; for(const ch of m[1]) n=n*26+(ch.charCodeAt(0)-64); return n-1;
+}
+function excelSerialToISO(n){
+  const d=new Date(Math.round((n-25569)*86400000));
+  return isNaN(d) ? "" : d.toISOString().slice(0,10);
+}
+async function readXlsx(buf){
+  const zip=await unzip(buf); const shared=[];
+  const ssXml=await zip.read("xl/sharedStrings.xml");
+  if(ssXml){
+    const doc=new DOMParser().parseFromString(ssXml,"application/xml");
+    for(const si of doc.getElementsByTagName("si")){
+      let t=""; for(const node of si.getElementsByTagName("t")) t+=node.textContent;
+      shared.push(t);
+    }
+  }
+  const sheetPath = zip.names.find(n=>/^xl\/worksheets\/sheet1\.xml$/.test(n))
+                 || zip.names.find(n=>/^xl\/worksheets\/.*\.xml$/.test(n));
+  if(!sheetPath) throw new Error("No worksheet found in the file.");
+  const doc=new DOMParser().parseFromString(await zip.read(sheetPath),"application/xml");
+  const grid=[];
+  for(const r of doc.getElementsByTagName("row")){
+    const arr=[];
+    for(const c of r.getElementsByTagName("c")){
+      const idx=colToIndex(c.getAttribute("r")), t=c.getAttribute("t");
+      let v="";
+      if(t==="inlineStr"){ for(const node of c.getElementsByTagName("t")) v+=node.textContent; }
+      else{
+        const vEl=c.getElementsByTagName("v")[0], raw=vEl?vEl.textContent:"";
+        if(t==="s") v=shared[parseInt(raw,10)]||"";
+        else if(t==="b") v = raw==="1"?"TRUE":"FALSE";
+        else v=raw;
+      }
+      arr[idx]=v;
+    }
+    for(let i=0;i<arr.length;i++) if(arr[i]==null) arr[i]="";
+    grid.push(arr);
+  }
+  return grid;
+}
+async function readAnyFile(file){
+  if(/\.xlsx?$|\.xlsm$/i.test(file.name)) return await readXlsx(await file.arrayBuffer());
+  return parseDelimited(await file.text());
+}
+
+/* ============================ normalisation ============================ */
+const PASS=/^(pass|passed|compliant|success|succeeded|ok|true|yes|satisfied)$/i;
+const FAIL=/^(fail|failed|failure|non[- _]?compliant|noncompliant|false|no|violation|error|not compliant)$/i;
+const WARN=/^(warn|warning|warned|partial|partially compliant|manual|manual review|review|indeterminate)$/i;
+const CODES={ "0":"pass", "1":"warn", "2":"fail" };
+function normStatus(v){
+  let s=String(v||"").trim(); if(!s) return "other";
+  if(S.statusCodes){ return CODES[s.replace(/\.0+$/,"")] || "other"; }
+  if(PASS.test(s)) return "pass";
+  if(FAIL.test(s)) return "fail";
+  if(WARN.test(s)) return "warn";
+  if(/warn|partial/i.test(s)) return "warn";
+  if(/fail|non[- ]?compl|not compl/i.test(s)) return "fail";
+  if(/pass|compl/i.test(s)) return "pass";
+  return "other";
+}
+function detectCodes(rows,col){
+  let n=0, hits=0;
+  for(const r of rows.slice(0,800)){
+    const s=String(r[col]||"").trim().replace(/\.0+$/,"");
+    if(!s) continue;
+    n++; if(s==="0"||s==="1"||s==="2") hits++;
+  }
+  return n>0 && hits/n>=0.9;
+}
+function normDate(v){
+  const s=String(v||"").trim(); if(!s) return "";
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  if(/^\d{5}(\.\d+)?$/.test(s)) return excelSerialToISO(parseFloat(s));
+  const m=/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/.exec(s);
+  if(m) return m[3]+"-"+String(m[2]).padStart(2,"0")+"-"+String(m[1]).padStart(2,"0");
+  const d=new Date(s); return isNaN(d)?"":d.toISOString().slice(0,10);
+}
+function normSeverity(v){
+  const s=lc(v); if(!s) return "";
+  if(/crit/.test(s)||s==="4") return "Critical";
+  if(/high/.test(s)||s==="3") return "High";
+  if(/med|mod/.test(s)||s==="2") return "Medium";
+  if(/low/.test(s)||s==="1") return "Low";
+  if(/info/.test(s)||s==="0") return "Info";
+  return String(v).trim();
+}
+const keyOf=(h,r)=> lc(h)+"\u0000"+lc(r);
+
+function autoMap(headers, fields){
+  const map={}, used=new Set();
+  const norm=h=>h.toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
+  for(const f of fields){
+    let best=null,bestScore=0;
+    for(const h of headers){
+      if(used.has(h)) continue;
+      const n=norm(h);
+      for(const hint of f.hints){
+        let score=0;
+        if(n===hint) score=100;
+        else if(n.replace(/ /g,"")===hint.replace(/ /g,"")) score=95;
+        else if(n.startsWith(hint)||n.endsWith(hint)) score=70;
+        else if(n.includes(hint)) score=55;
+        if(hint==="id" && n!=="id") score=Math.min(score,20);
+        if(hint==="name" && n!=="name") score=Math.min(score,25);
+        if(hint==="date" && n!=="date") score=Math.min(score,30);
+        if(hint==="status" && f.key!=="status") score=Math.min(score,40);
+        if(score>bestScore){ bestScore=score; best=h; }
+      }
+    }
+    if(best && bestScore>=50){ map[f.key]=best; used.add(best); } else map[f.key]="";
+  }
+  return map;
+}
+
+/* ============================ tracking file ============================ */
+function newState(){
+  return {
+    schema:"middleware-compliance-tracker/2",
+    createdAt:new Date().toISOString(),
+    trackingStart:todayISO(),
+    slaDays:30,
+    inventory:null,
+    runs:[],
+    findings:{},
+    changes:[]
+  };
+}
+function validateState(o){
+  if(!o||typeof o!=="object") throw new Error("That file is not a tracking file.");
+  if(!/^middleware-compliance-tracker\/[12]$/.test(o.schema||"")) throw new Error("Unrecognised tracking file format.");
+  o.schema="middleware-compliance-tracker/2";
+  o.runs=Array.isArray(o.runs)?o.runs:[];
+  o.findings=(o.findings&&typeof o.findings==="object")?o.findings:{};
+  o.changes=Array.isArray(o.changes)?o.changes:[];
+  o.slaDays=Number(o.slaDays)||30;
+  o.trackingStart=o.trackingStart||todayISO();
+  if(o.inventory && !o.inventory.hosts) o.inventory=null;
+  return o;
+}
+function logChange(kind, detail, reason, count){
+  S.state.changes.push({
+    at:new Date().toISOString(),
+    operator:($("operator").value||"").trim()||"unnamed",
+    kind, detail:detail||"", reason:reason||"", count:count||0
+  });
+}
+
+/* ============================ inventory ============================ */
+function applyInventory(){
+  const m=S.invMapping;
+  if(!m.host){ msg("invMsg","Choose the host column before continuing.","err"); return; }
+  const { headers, rows } = rowsToObjects(S.invGrid);
+  const hosts={};
+  let dupes=0, blank=0;
+  for(const r of rows){
+    const h=String(r[m.host]||"").trim();
+    if(!h){ blank++; continue; }
+    if(hosts[lc(h)]) dupes++;
+    hosts[lc(h)] = { host:h, attrs:r };
+  }
+  S.state.inventory = {
+    loadedAt:new Date().toISOString(),
+    source:S.invSource,
+    columns:headers,
+    fields:{ host:m.host, owner:m.owner||"", app:m.app||"", env:m.env||"", status:m.status||"" },
+    hosts
+  };
+  logChange("inventory-loaded", S.invSource + " — " + Object.keys(hosts).length + " hosts", "", Object.keys(hosts).length);
+  $("invMapWrap").hidden = true;
+  $("st2").className="step done";
+  $("secImport").hidden = false;
+  let note = Object.keys(hosts).length + " hosts loaded from " + S.invSource + ".";
+  if(dupes) note += " " + dupes + " duplicate host rows were collapsed, last one wins.";
+  if(blank) note += " " + blank + " rows had no host name and were skipped.";
+  msg("invMsg", note, "good");
+  renderAll();
+}
+function invAttr(host, field){
+  const inv = S.state && S.state.inventory;
+  if(!inv) return "";
+  const rec = inv.hosts[lc(host)];
+  if(!rec) return "";
+  const col = inv.fields[field];
+  return col ? String(rec.attrs[col]||"").trim() : "";
+}
+
+/* ============================ merge ============================ */
+function merge(){
+  const st=S.state;
+  const runDate=$("runDate").value||todayISO();
+  const operator=$("operator").value.trim()||"unnamed";
+  const slaDays=Math.max(1,parseInt($("slaDays").value,10)||30);
+  st.slaDays=slaDays;
+
+  const isFirstRun = st.runs.length===0;
+  const m=S.mapping;
+  const seenHosts=new Set();
+  const journal=[], touched=new Set();
+  const mark=k=>{ if(touched.has(k)) return; touched.add(k);
+    journal.push({ k, before: st.findings[k] ? JSON.parse(JSON.stringify(st.findings[k])) : null }); };
+
+  const warnMode=($("warnMode").value)||"finding";
+  S.warnMode=warnMode;
+  let nNew=0,nClosed=0,nReopened=0,nStill=0,nOther=0,nSkipped=0,nWarn=0,nWarnIgnored=0;
+
+  for(const r of S.rows){
+    const host=String(r[m.host]||"").trim();
+    const ruleId=String(r[m.ruleId]||"").trim();
+    if(!host||!ruleId){ nSkipped++; continue; }
+    const status=normStatus(r[m.status]);
+    if(status==="other"){ nOther++; continue; }
+    if(status==="warn"){
+      if(warnMode==="ignore"){ nWarnIgnored++; seenHosts.add(lc(host)); continue; }
+      nWarn++;
+    }
+    seenHosts.add(lc(host));
+    const k=keyOf(host,ruleId);
+    const ruleName=m.ruleName?String(r[m.ruleName]||"").trim():"";
+    const severity=m.severity?normSeverity(r[m.severity]):"";
+    const lastScan=(m.lastScan?normDate(r[m.lastScan]):"")||runDate;
+
+    let f=st.findings[k];
+    if(!f){
+      if(status==="pass") continue;
+      mark(k);
+      st.findings[k]={ host,ruleId,ruleName,severity,
+        kind: status==="warn" ? "Warning" : "Failure", state:"open",
+        firstFound: isFirstRun ? st.trackingStart : runDate,
+        baseline: isFirstRun, lastSeenFail:runDate, lastScan,
+        occurrences:1, remediatedOn:null, history:[], openedInRun: st.runs.length+1 };
+      nNew++; continue;
+    }
+    mark(k);
+    if(ruleName) f.ruleName=ruleName;
+    if(severity) f.severity=severity;
+    f.lastScan=lastScan;
+    if(status!=="pass"){
+      f.kind = status==="warn" ? "Warning" : "Failure";
+      if(f.state==="open"){ f.lastSeenFail=runDate; f.occurrences=(f.occurrences||1)+1; nStill++; }
+      else{
+        f.history=f.history||[];
+        f.history.push({ firstFound:f.firstFound, closedOn:f.remediatedOn, baseline:!!f.baseline, occurrences:f.occurrences||1 });
+        f.state="open"; f.firstFound=runDate; f.baseline=false; f.lastSeenFail=runDate;
+        f.remediatedOn=null; f.occurrences=1; f.openedInRun=st.runs.length+1;
+        nReopened++;
+      }
+    }else if(f.state==="open"){
+      f.state="remediated"; f.remediatedOn=runDate; nClosed++;
+    }
+  }
+
+  const hostList=[...seenHosts];
+  const run={ id:st.runs.length+1, ranAt:new Date().toISOString(), scanDate:runDate, operator,
+    source:S.sourceName||"pasted rows", rows:S.rows.length, hosts:hostList.length, hostList,
+    newFindings:nNew, stillFailing:nStill, remediated:nClosed, reopened:nReopened,
+    unreadable:nOther+nSkipped, warnings:nWarn, warningsIgnored:nWarnIgnored, warnMode,
+    codedResults:!!S.statusCodes, slaDays, undo:journal,
+    inventorySource: st.inventory ? st.inventory.source : null };
+  st.runs.push(run);
+  // keep the last 10 undo journals only
+  st.runs.slice(0,-10).forEach(r=>{ if(r.undo) delete r.undo; });
+
+  const cov=coverage();
+  S.lastMerge={ nNew,nClosed,nReopened,nStill,nOther,nSkipped,nWarn,nWarnIgnored,
+    hosts:hostList.length,isFirstRun,
+    notScanned:cov.notScannedNow.length, notInventoried:cov.notInventoried.length };
+  return S.lastMerge;
+}
+
+function revertLastRun(reason){
+  const st=S.state, run=st.runs[st.runs.length-1];
+  if(!run) return false;
+  if(!run.undo){ return false; }
+  for(let i=run.undo.length-1;i>=0;i--){
+    const e=run.undo[i];
+    if(e.before===null) delete st.findings[e.k];
+    else st.findings[e.k]=e.before;
+  }
+  st.runs.pop();
+  logChange("run-reverted","Run "+run.id+" of "+run.scanDate+", source "+run.source, reason, run.rows);
+  S.lastMerge=null;
+  return true;
+}
+
+/* ============================ derived ============================ */
+function lastRunHosts(){
+  const r = S.state.runs[S.state.runs.length-1];
+  return new Set((r && r.hostList) ? r.hostList : []);
+}
+function enrich(){
+  const st=S.state, today=todayISO(), sla=st.slaDays, seen=lastRunHosts();
+  const anyRun = st.runs.length>0;
+  const out=[];
+  for(const k in st.findings){
+    const f=st.findings[k];
+    const endDate = f.state==="open" ? today : (f.remediatedOn||today);
+    const age=Math.max(0,daysBetween(f.firstFound,endDate));
+    const over=age-sla;
+    let slaStatus;
+    if(f.state!=="open") slaStatus = over>0 ? "Closed late" : "Closed in SLA";
+    else if(over>0) slaStatus="Breached";
+    else if(over>-8) slaStatus="Due soon";
+    else slaStatus="In SLA";
+    const notScanned = anyRun && f.state==="open" && !seen.has(lc(f.host));
+    out.push(Object.assign({ key:k, age, over, slaStatus, bucket:bucketOf(age), notScanned,
+      owner:invAttr(f.host,"owner"), app:invAttr(f.host,"app"), env:invAttr(f.host,"env"),
+      inInventory: !!(st.inventory && st.inventory.hosts[lc(f.host)]) }, f, { kind: f.kind||"Failure" }));
+  }
+  return out;
+}
+function bucketOf(a){ return a<=7?"0–7":a<=30?"8–30":a<=60?"31–60":a<=90?"61–90":"90+"; }
+
+function coverage(){
+  const st=S.state, inv=st.inventory;
+  const seenNow=lastRunHosts();
+  const everSeen=new Set();
+  st.runs.forEach(r=>(r.hostList||[]).forEach(h=>everSeen.add(h)));
+  const invHosts = inv ? Object.values(inv.hosts).map(r=>r.host) : [];
+  const notScannedNow = invHosts.filter(h=>!seenNow.has(lc(h)));
+  const neverScanned  = invHosts.filter(h=>!everSeen.has(lc(h)));
+  const notInventoried = inv ? [...seenNow].filter(h=>!inv.hosts[h]) : [];
+  return {
+    inventoryCount: invHosts.length,
+    scannedNow: seenNow.size,
+    notScannedNow, neverScanned, notInventoried,
+    pct: invHosts.length ? Math.round(seenNow.size / invHosts.length * 100) : null
+  };
+}
+
+/* ============================ render ============================ */
+function renderChips(){
+  const c=$("stateChip");
+  if(!S.state){ c.className="statechip"; c.textContent="No tracking file"; }
+  else{
+    c.className="statechip on";
+    const n=Object.keys(S.state.findings).length;
+    c.textContent=S.state.runs.length+" run"+(S.state.runs.length===1?"":"s")+" · "+n+" finding"+(n===1?"":"s");
+  }
+  const i=$("invChip");
+  if(S.state && S.state.inventory){
+    i.className="statechip on";
+    i.textContent=Object.keys(S.state.inventory.hosts).length+" hosts in inventory";
+    $("btnInvClear").hidden=false;
+  }else{ i.className="statechip"; i.textContent="No inventory"; $("btnInvClear").hidden=true; }
+}
+function renderFigures(){
+  if(!S.state||!S.state.runs.length){ $("figures").className="figures"; return; }
+  const all=enrich(), open=all.filter(f=>f.state==="open");
+  const cov=coverage();
+  const figs=[
+    { n:open.filter(f=>f.slaStatus==="Breached").length, l:"Past SLA", cls:"breach" },
+    { n:open.filter(f=>f.slaStatus==="Due soon").length, l:"Due within 7 days", cls:"due" },
+    { n:open.length, l:"Open findings", cls:"" },
+    { n:open.length?Math.round(open.reduce((s,f)=>s+f.age,0)/open.length):0, l:"Mean age, days", cls:"" },
+    { n:all.filter(f=>f.state!=="open").length, l:"Remediated", cls:"ok" },
+    { n:open.filter(f=>f.baseline).length, l:"Baseline dated", cls:"" }
+  ];
+  if(cov.pct!==null) figs.push({ n:cov.pct+"%", l:"Inventory scanned", cls: cov.pct<95?"due":"ok" });
+  $("figures").className="figures show";
+  $("figures").innerHTML=figs.map(f=>'<div class="fig '+f.cls+'"><div class="n">'+esc(f.n)+'</div><div class="l">'+esc(f.l)+'</div></div>').join("");
+}
+function pill(s){
+  const cls = (s==="Breached"||s==="Closed late") ? "p-breach" : s==="Due soon" ? "p-due" : "p-ok";
+  return '<span class="pill '+cls+'">'+esc(s)+'</span>';
+}
+function sortRows(rows){
+  const { key,dir }=S.sort;
+  return rows.sort((a,b)=>{
+    let x=a[key], y=b[key];
+    if(typeof x==="string") x=x.toLowerCase();
+    if(typeof y==="string") y=y.toLowerCase();
+    if(x==null)x=""; if(y==null)y="";
+    return x<y?-dir:x>y?dir:0;
+  });
+}
+function renderTab(){
+  const b=$("tabbody");
+  ({ findings:renderFindings, coverage:renderCoverage, groups:renderGroups,
+     hosts:renderHosts, rules:renderRules, runs:renderRuns, manage:renderManage })[S.tab](b);
+}
+
+function filteredFindings(){
+  let rows=enrich(); const ft=S.filter;
+  if(ft.status==="open") rows=rows.filter(f=>f.state==="open");
+  if(ft.status==="closed") rows=rows.filter(f=>f.state!=="open");
+  if(ft.sla==="breach") rows=rows.filter(f=>f.slaStatus==="Breached");
+  if(ft.sla==="due") rows=rows.filter(f=>f.slaStatus==="Due soon");
+  if(ft.sla==="baseline") rows=rows.filter(f=>f.baseline);
+  if(ft.sla==="stale") rows=rows.filter(f=>f.notScanned);
+  if(ft.sla==="noinv") rows=rows.filter(f=>!f.inInventory);
+  if(ft.sla==="warnonly") rows=rows.filter(f=>f.kind==="Warning");
+  if(ft.sla==="failonly") rows=rows.filter(f=>f.kind==="Failure");
+  if(ft.run!=="all") rows=rows.filter(f=>String(f.openedInRun)===ft.run);
+  if(ft.text){
+    const q=ft.text.toLowerCase();
+    rows=rows.filter(f=>(f.host+" "+f.ruleId+" "+(f.ruleName||"")+" "+(f.owner||"")+" "+(f.app||"")).toLowerCase().includes(q));
+  }
+  return sortRows(rows);
+}
+
+function renderFindings(body){
+  const rows=filteredFindings(), ft=S.filter, hasInv=!!(S.state.inventory);
+  const cols=[["host","Host"],["ruleId","Rule ID"],["ruleName","Rule name"],["kind","Result"],["severity","Severity"]]
+    .concat(hasInv?[["owner","Owner"],["app","Application"],["env","Env"]]:[])
+    .concat([["firstFound","First found"],["age","Age"],["slaStatus","SLA"],
+             ["lastSeenFail","Last failing"],["occurrences","Seen"],["remediatedOn","Closed"]]);
+  const runOpts='<option value="all">Any run</option>'+S.state.runs.map(r=>'<option value="'+r.id+'">Opened in run '+r.id+' · '+esc(r.scanDate)+'</option>').join("");
+  body.innerHTML=
+    '<div class="filters">'+
+      '<input type="text" id="fText" placeholder="Filter host, rule, owner or application" value="'+esc(ft.text)+'">'+
+      '<select id="fStatus"><option value="open">Open</option><option value="closed">Remediated</option><option value="all">All</option></select>'+
+      '<select id="fSla"><option value="all">Any SLA state</option><option value="breach">Past SLA</option><option value="due">Due soon</option><option value="baseline">Baseline dated</option><option value="stale">Host not scanned</option><option value="noinv">Not in inventory</option><option value="failonly">Failures only</option><option value="warnonly">Warnings only</option></select>'+
+      '<select id="fRun">'+runOpts+'</select>'+
+      '<span class="count">'+rows.length+' shown</span>'+
+    '</div>'+
+    '<div class="bar">'+
+      '<button class="quiet" id="selAll">Select all shown</button>'+
+      '<button class="quiet" id="selNone">Clear selection</button>'+
+      '<button class="danger" id="delSel" '+(S.selected.size?"":"disabled")+'>Remove selected ('+S.selected.size+')</button>'+
+      '<span class="note" style="margin:0">Removals are permanent and are written to the change log.</span>'+
+    '</div>'+
+    (rows.length ?
+      '<div class="scroller"><table><thead><tr><th class="chk nosort"></th>'+
+      cols.map(c=>'<th data-k="'+c[0]+'">'+esc(c[1])+'</th>').join("")+
+      '</tr></thead><tbody>'+
+      rows.map(f=>'<tr class="'+(S.selected.has(f.key)?"sel":"")+'">'+
+        '<td class="chk"><input type="checkbox" data-k="'+esc(f.key)+'"'+(S.selected.has(f.key)?" checked":"")+'></td>'+
+        '<td>'+esc(f.host)+(f.notScanned?' <span class="pill p-due">not scanned</span>':'')+
+          (hasInv&&!f.inInventory?' <span class="pill p-breach">not inventoried</span>':'')+'</td>'+
+        '<td>'+esc(f.ruleId)+'</td>'+
+        '<td class="name">'+esc(f.ruleName||"")+'</td>'+
+        '<td>'+(f.kind==="Warning"?'<span class="pill p-due">Warning</span>':'<span class="pill p-breach">Failure</span>')+'</td>'+
+        '<td>'+esc(f.severity||"")+'</td>'+
+        (hasInv?'<td>'+esc(f.owner||"")+'</td><td>'+esc(f.app||"")+'</td><td>'+esc(f.env||"")+'</td>':'')+
+        '<td>'+esc(f.firstFound)+(f.baseline?' <span class="pill p-base">baseline</span>':'')+'</td>'+
+        '<td>'+f.age+'</td><td>'+pill(f.slaStatus)+'</td>'+
+        '<td>'+esc(f.lastSeenFail||"")+'</td><td>'+(f.occurrences||1)+'</td><td>'+esc(f.remediatedOn||"")+'</td>'+
+        '</tr>').join("")+
+      '</tbody></table></div>'
+      : '<div class="empty">Nothing matches these filters.</div>');
+
+  $("fStatus").value=ft.status; $("fSla").value=ft.sla; $("fRun").value=ft.run;
+  $("fText").oninput=e=>{ ft.text=e.target.value; const p=e.target.selectionStart; renderTab();
+    const n=$("fText"); n.focus(); n.setSelectionRange(p,p); };
+  $("fStatus").onchange=e=>{ ft.status=e.target.value; renderTab(); };
+  $("fSla").onchange=e=>{ ft.sla=e.target.value; renderTab(); };
+  $("fRun").onchange=e=>{ ft.run=e.target.value; renderTab(); };
+  body.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; S.sort={ key:k, dir:S.sort.key===k?-S.sort.dir:-1 }; renderTab();
+  });
+  body.querySelectorAll('input[type=checkbox][data-k]').forEach(cb=>cb.onchange=e=>{
+    const k=e.target.dataset.k;
+    if(e.target.checked) S.selected.add(k); else S.selected.delete(k);
+    renderTab();
+  });
+  $("selAll").onclick=()=>{ rows.forEach(f=>S.selected.add(f.key)); renderTab(); };
+  $("selNone").onclick=()=>{ S.selected.clear(); renderTab(); };
+  $("delSel").onclick=()=>removeSelected();
+}
+
+function removeSelected(){
+  const n=S.selected.size; if(!n) return;
+  const reason=prompt("Removing "+n+" finding(s). This cannot be undone.\n\nWhy are they being removed? (recorded in the change log)");
+  if(reason===null) return;
+  if(!reason.trim()){ alert("A reason is required."); return; }
+  const sample=[...S.selected].slice(0,5).map(k=>{ const f=S.state.findings[k]; return f?f.host+" / "+f.ruleId:k; });
+  S.selected.forEach(k=>delete S.state.findings[k]);
+  logChange("findings-removed", sample.join("; ")+(n>5?" and "+(n-5)+" more":""), reason.trim(), n);
+  S.selected.clear();
+  renderAll();
+}
+
+function renderCoverage(body){
+  const cov=coverage();
+  if(!S.state.inventory){
+    body.innerHTML='<div class="empty">Load a device inventory to see scan coverage.</div>'; return;
+  }
+  const rows=[
+    ["Hosts in inventory", cov.inventoryCount, ""],
+    ["Scanned in the latest run", cov.scannedNow, cov.pct+"% of inventory"],
+    ["In inventory, missing from the latest run", cov.notScannedNow.length, cov.notScannedNow.length?"open findings on these hosts stay open":""],
+    ["In inventory, never scanned in any run", cov.neverScanned.length, cov.neverScanned.length?"no compliance evidence exists for these":""],
+    ["Scanned but not in the inventory", cov.notInventoried.length, cov.notInventoried.length?"unrecorded assets":""]
+  ];
+  const list=(title,arr)=> arr.length ?
+    '<h3>'+esc(title)+' ('+arr.length+')</h3><div class="scroller" style="max-height:220px"><table><tbody>'+
+    arr.sort().map(h=>'<tr><td>'+esc(h)+'</td><td>'+esc(invAttr(h,"owner"))+'</td><td>'+esc(invAttr(h,"app"))+'</td></tr>').join("")+
+    '</tbody></table></div>' : "";
+  body.innerHTML='<div class="panelbody">'+
+    '<table style="max-width:680px"><tbody>'+
+      rows.map(r=>'<tr><td>'+esc(r[0])+'</td><td style="font-weight:600">'+r[1]+'</td><td style="color:var(--ink-soft)">'+esc(r[2])+'</td></tr>').join("")+
+    '</tbody></table>'+
+    '<div class="divider"></div>'+
+    list("Never scanned", cov.neverScanned)+
+    list("Missing from the latest run", cov.notScannedNow.filter(h=>cov.neverScanned.indexOf(h)<0))+
+    list("Scanned but not inventoried", cov.notInventoried)+
+    '</div>';
+}
+
+function renderGroups(body){
+  if(!S.state.inventory){ body.innerHTML='<div class="empty">Load a device inventory to group findings by owner or application.</div>'; return; }
+  const open=enrich().filter(f=>f.state==="open");
+  const build=(field,label)=>{
+    const by={};
+    for(const f of open){
+      const g=f[field]||"(not recorded)";
+      const o=by[g]||(by[g]={ g, open:0, breach:0, hosts:new Set(), oldest:0 });
+      o.open++; if(f.slaStatus==="Breached") o.breach++;
+      o.hosts.add(f.host); o.oldest=Math.max(o.oldest,f.age);
+    }
+    const rows=Object.values(by).sort((a,b)=>b.breach-a.breach||b.open-a.open);
+    if(!rows.length) return "";
+    return '<h3>'+esc(label)+'</h3><div class="scroller" style="max-height:300px"><table><thead><tr><th class="nosort">'+esc(label)+
+      '</th><th class="nosort">Hosts</th><th class="nosort">Open</th><th class="nosort">Past SLA</th><th class="nosort">Oldest, days</th></tr></thead><tbody>'+
+      rows.map(r=>'<tr><td>'+esc(r.g)+'</td><td>'+r.hosts.size+'</td><td>'+r.open+'</td><td>'+
+        (r.breach?'<span class="pill p-breach">'+r.breach+'</span>':'0')+'</td><td>'+r.oldest+'</td></tr>').join("")+
+      '</tbody></table></div>';
+  };
+  const html=build("owner","Owner or support group")+build("app","Application or service")+build("env","Environment");
+  body.innerHTML='<div class="panelbody">'+(html||'<p>The inventory has no owner, application or environment column mapped.</p>')+'</div>';
+}
+
+function renderHosts(body){
+  const open=enrich().filter(f=>f.state==="open"), by={};
+  for(const f of open){
+    const h=by[f.host]||(by[f.host]={ host:f.host, owner:f.owner, app:f.app, open:0, breach:0, oldest:0,
+      notScanned:f.notScanned, inInventory:f.inInventory });
+    h.open++; if(f.slaStatus==="Breached") h.breach++;
+    h.oldest=Math.max(h.oldest,f.age);
+  }
+  const rows=Object.values(by).sort((a,b)=>b.breach-a.breach||b.open-a.open);
+  const hasInv=!!S.state.inventory;
+  body.innerHTML = rows.length ?
+    '<div class="bar"><span class="note" style="margin:0">Use Remove all findings for a host when a device has been decommissioned or loaded in error.</span></div>'+
+    '<div class="scroller"><table><thead><tr><th class="nosort">Host</th>'+
+    (hasInv?'<th class="nosort">Owner</th><th class="nosort">Application</th>':'')+
+    '<th class="nosort">Open</th><th class="nosort">Past SLA</th><th class="nosort">Oldest, days</th><th class="nosort">Scanned</th><th class="nosort"></th></tr></thead><tbody>'+
+    rows.map(h=>'<tr><td>'+esc(h.host)+(hasInv&&!h.inInventory?' <span class="pill p-breach">not inventoried</span>':'')+'</td>'+
+      (hasInv?'<td>'+esc(h.owner||"")+'</td><td>'+esc(h.app||"")+'</td>':'')+
+      '<td>'+h.open+'</td><td>'+(h.breach?'<span class="pill p-breach">'+h.breach+'</span>':'0')+'</td>'+
+      '<td>'+h.oldest+'</td><td>'+(h.notScanned?'<span class="pill p-due">no</span>':'yes')+'</td>'+
+      '<td><button class="danger" data-host="'+esc(h.host)+'" style="padding:3px 9px;font-size:12.5px">Remove</button></td></tr>').join("")+
+    '</tbody></table></div>' : '<div class="empty">No open findings.</div>';
+  body.querySelectorAll("button[data-host]").forEach(b=>b.onclick=()=>removeHost(b.dataset.host));
+}
+
+function removeHost(host){
+  const keys=Object.keys(S.state.findings).filter(k=>lc(S.state.findings[k].host)===lc(host));
+  const reason=prompt("Removing all "+keys.length+" finding(s) for "+host+". This cannot be undone.\n\nWhy? (recorded in the change log)");
+  if(reason===null) return;
+  if(!reason.trim()){ alert("A reason is required."); return; }
+  keys.forEach(k=>delete S.state.findings[k]);
+  logChange("host-removed", host, reason.trim(), keys.length);
+  renderAll();
+}
+
+function renderRules(body){
+  const open=enrich().filter(f=>f.state==="open"), by={};
+  for(const f of open){
+    const r=by[f.ruleId]||(by[f.ruleId]={ ruleId:f.ruleId, ruleName:f.ruleName, severity:f.severity, hosts:0, breach:0, oldest:0 });
+    r.hosts++; if(f.slaStatus==="Breached") r.breach++;
+    r.oldest=Math.max(r.oldest,f.age);
+    if(!r.ruleName&&f.ruleName) r.ruleName=f.ruleName;
+  }
+  const rows=Object.values(by).sort((a,b)=>b.hosts-a.hosts);
+  body.innerHTML = rows.length ?
+    '<div class="scroller"><table><thead><tr><th class="nosort">Rule ID</th><th class="nosort">Rule name</th><th class="nosort">Severity</th><th class="nosort">Hosts failing</th><th class="nosort">Past SLA</th><th class="nosort">Oldest, days</th></tr></thead><tbody>'+
+    rows.map(r=>'<tr><td>'+esc(r.ruleId)+'</td><td class="name">'+esc(r.ruleName||"")+'</td><td>'+esc(r.severity||"")+
+      '</td><td>'+r.hosts+'</td><td>'+(r.breach?'<span class="pill p-breach">'+r.breach+'</span>':'0')+'</td><td>'+r.oldest+'</td></tr>').join("")+
+    '</tbody></table></div>' : '<div class="empty">No open findings.</div>';
+}
+
+function renderRuns(body){
+  const rows=[...S.state.runs].reverse();
+  body.innerHTML = rows.length ?
+    '<div class="scroller"><table><thead><tr><th class="nosort">Run</th><th class="nosort">Scan date</th><th class="nosort">Run by</th><th class="nosort">Source file</th><th class="nosort">Inventory</th><th class="nosort">Hosts</th><th class="nosort">Rows</th><th class="nosort">New</th><th class="nosort">Remediated</th><th class="nosort">Reopened</th><th class="nosort">Ignored</th></tr></thead><tbody>'+
+    rows.map(r=>'<tr><td>'+r.id+'</td><td>'+esc(r.scanDate)+'</td><td>'+esc(r.operator)+'</td><td class="name">'+esc(r.source)+
+      '</td><td class="name">'+esc(r.inventorySource||"none")+'</td><td>'+r.hosts+'</td><td>'+r.rows+'</td><td>'+r.newFindings+
+      '</td><td>'+r.remediated+'</td><td>'+r.reopened+'</td><td>'+(r.unreadable||0)+'</td></tr>').join("")+
+    '</tbody></table></div>' : '<div class="empty">No runs recorded yet.</div>';
+}
+
+function renderManage(body){
+  const last=S.state.runs[S.state.runs.length-1];
+  const canRevert = last && last.undo;
+  const changes=[...S.state.changes].reverse();
+  body.innerHTML='<div class="panelbody">'+
+    '<h3>Undo a load</h3>'+
+    '<p>Reverting restores every finding to exactly the state it was in before that run, including first-found dates and closures. Runs must be reverted newest first, and only the last ten loads keep enough history to be reverted.</p>'+
+    (last ?
+      '<div class="row"><button class="danger" id="btnRevert" '+(canRevert?"":"disabled")+'>Revert run '+last.id+' — '+esc(last.scanDate)+', '+esc(last.source)+'</button></div>'+
+      (canRevert?"":'<div class="warn">This run is too old to revert. Its undo history has been dropped to keep the tracking file small.</div>')
+      : '<p>No runs to revert.</p>')+
+    '<div class="divider"></div>'+
+    '<h3>Remove findings</h3>'+
+    '<p>Select rows on the findings tab, or remove every finding for one host on the hosts tab. Removal is permanent — revert the whole run instead if an entire load was wrong.</p>'+
+    '<div class="divider"></div>'+
+    '<h3>Change log</h3>'+
+    (changes.length ?
+      '<div class="scroller" style="max-height:300px"><table><thead><tr><th class="nosort">When</th><th class="nosort">By</th><th class="nosort">Action</th><th class="nosort">Detail</th><th class="nosort">Count</th><th class="nosort">Reason</th></tr></thead><tbody>'+
+      changes.map(c=>'<tr><td>'+esc(c.at.slice(0,16).replace("T"," "))+'</td><td>'+esc(c.operator)+'</td><td>'+esc(c.kind)+
+        '</td><td class="name">'+esc(c.detail)+'</td><td>'+c.count+'</td><td class="name">'+esc(c.reason)+'</td></tr>').join("")+
+      '</tbody></table></div>'
+      : '<p>No corrections recorded.</p>')+
+    '</div>';
+  if(last && canRevert) $("btnRevert").onclick=()=>{
+    const reason=prompt("Reverting run "+last.id+" ("+last.scanDate+", "+last.source+").\n\nWhy? (recorded in the change log)");
+    if(reason===null) return;
+    if(!reason.trim()){ alert("A reason is required."); return; }
+    if(revertLastRun(reason.trim())){
+      msg("runMsg","Run reverted. Save the tracking file to keep this correction.","warn");
+      renderAll();
+    }
+  };
+}
+
+function renderAll(){
+  renderChips(); renderFigures();
+  const has=S.state&&S.state.runs.length;
+  $("secResults").hidden=!has;
+  $("secExport").hidden=!S.state;
+  if(has) renderTab();
+}
+
+/* ============================ mapping UI ============================ */
+function renderMaps(){
+  $("maps").innerHTML=FIELDS.map(f=>{
+    const sel=S.mapping[f.key]||"";
+    const sample=sel?(S.rows.slice(0,4).map(r=>r[sel]).filter(Boolean)[0]||""):"";
+    return '<div class="mapcard"><label class="fld">'+esc(f.label)+(f.required?' <span class="req">required</span>':' (optional)')+
+      '<select data-f="'+f.key+'"><option value="">— not present —</option>'+
+      S.headers.map(h=>'<option value="'+esc(h)+'"'+(h===sel?' selected':'')+'>'+esc(h)+'</option>').join("")+
+      '</select></label>'+(sample?'<div class="sample">e.g. '+esc(String(sample).slice(0,46))+'</div>':'')+'</div>';
+  }).join("");
+  $("maps").querySelectorAll("select").forEach(s=>s.onchange=e=>{
+    S.mapping[e.target.dataset.f]=e.target.value; renderMaps(); checkMapping();
+  });
+  checkMapping();
+}
+function renderInvMaps(){
+  const { rows }=rowsToObjects(S.invGrid);
+  $("invMaps").innerHTML=INV_FIELDS.map(f=>{
+    const sel=S.invMapping[f.key]||"";
+    const sample=sel?(rows.slice(0,4).map(r=>r[sel]).filter(Boolean)[0]||""):"";
+    return '<div class="mapcard"><label class="fld">'+esc(f.label)+(f.required?' <span class="req">required</span>':' (optional)')+
+      '<select data-f="'+f.key+'"><option value="">— not present —</option>'+
+      S.invHeaders.map(h=>'<option value="'+esc(h)+'"'+(h===sel?' selected':'')+'>'+esc(h)+'</option>').join("")+
+      '</select></label>'+(sample?'<div class="sample">e.g. '+esc(String(sample).slice(0,46))+'</div>':'')+'</div>';
+  }).join("");
+  $("invMaps").querySelectorAll("select").forEach(s=>s.onchange=e=>{ S.invMapping[e.target.dataset.f]=e.target.value; renderInvMaps(); });
+}
+function checkMapping(){
+  const missing=FIELDS.filter(f=>f.required&&!S.mapping[f.key]).map(f=>f.label);
+  if(missing.length){
+    msg("mapMsg","Choose a column for: "+missing.join(", ")+".","err");
+    $("secRun").hidden=true; $("st4").className="step"; return false;
+  }
+  const m=S.mapping;
+  S.statusCodes=detectCodes(S.rows,m.status);
+  const counts={ pass:0, fail:0, warn:0, other:0 };
+  for(const r of S.rows) counts[normStatus(r[m.status])]++;
+  if(counts.pass+counts.fail+counts.warn===0){
+    msg("mapMsg","No values in the result column look like a result. Pick a different column.","err");
+    $("secRun").hidden=true; $("st4").className="step"; return false;
+  }
+  $("warnWrap").hidden = counts.warn===0;
+  let note="";
+  if(S.statusCodes) note="Numeric results detected — 0 read as pass, 1 as warning, 2 as failed. ";
+  if(counts.warn) note+=counts.warn+" warnings in this export; choose below whether they are tracked. ";
+  if(counts.other>(counts.pass+counts.fail+counts.warn))
+    note+="Most values were not recognised and will be ignored. Check the column choice.";
+  msg("mapMsg", note.trim(), S.statusCodes && counts.other===0 ? "good" : "warn");
+  $("st4").className="step done"; $("secRun").hidden=false;
+  if(m.lastScan && !$("runDate").dataset.touched){
+    const dates=S.rows.map(r=>normDate(r[m.lastScan])).filter(Boolean).sort();
+    if(dates.length) $("runDate").value=dates[dates.length-1];
+  }
+  const hosts=new Set(S.rows.map(r=>lc(r[m.host])).filter(Boolean)).size;
+  $("mergePreview").textContent=counts.fail+" failing"+(counts.warn?", "+counts.warn+" warning":"")+
+    " rows across "+hosts+" hosts in this export.";
+  return true;
+}
+
+/* ============================ files ============================ */
+function download(name,text,type){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{ type:type||"text/plain;charset=utf-8" }));
+  a.download=name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1500);
+}
+function csv(rows){
+  const q=v=>{ const s=String(v==null?"":v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+  return "\uFEFF"+rows.map(r=>r.map(q).join(",")).join("\r\n");
+}
+function findingsSheet(){
+  const hasInv=!!S.state.inventory;
+  const head=["Host"].concat(hasInv?["Owner","Application","Environment","In Inventory"]:[])
+    .concat(["Rule ID","Rule Name","Result Type","Severity","Status","First Found","Baseline Dated","Last Seen Failing",
+      "Last Scan","Age Days","SLA Days","SLA Status","Days Over SLA","Age Bucket","Times Seen",
+      "Remediated On","Host Not Scanned","Opened In Run"]);
+  const rows=enrich().sort((a,b)=>b.age-a.age);
+  return csv([head].concat(rows.map(f=>[f.host]
+    .concat(hasInv?[f.owner||"",f.app||"",f.env||"",f.inInventory?"Yes":"No"]:[])
+    .concat([f.ruleId,f.ruleName||"",f.kind,f.severity||"", f.state==="open"?"Open":"Remediated",
+      f.firstFound, f.baseline?"Yes":"No", f.lastSeenFail||"", f.lastScan||"", f.age, S.state.slaDays,
+      f.slaStatus, f.over>0?f.over:0, f.bucket, f.occurrences||1, f.remediatedOn||"",
+      f.notScanned?"Yes":"No", f.openedInRun||""]))));
+}
+function coverageSheet(){
+  const cov=coverage();
+  const head=["Host","Owner","Application","Environment","In Inventory","Scanned In Latest Run","Ever Scanned","Open Findings"];
+  const openBy={};
+  enrich().filter(f=>f.state==="open").forEach(f=>{ openBy[lc(f.host)]=(openBy[lc(f.host)]||0)+1; });
+  const seenNow=lastRunHosts(); const ever=new Set();
+  S.state.runs.forEach(r=>(r.hostList||[]).forEach(h=>ever.add(h)));
+  const all=new Map();
+  if(S.state.inventory) Object.values(S.state.inventory.hosts).forEach(r=>all.set(lc(r.host),r.host));
+  [...ever].forEach(h=>{ if(!all.has(h)) all.set(h,h); });
+  const rows=[...all.entries()].sort((a,b)=>a[0]<b[0]?-1:1).map(([k,h])=>[
+    h, invAttr(h,"owner"), invAttr(h,"app"), invAttr(h,"env"),
+    (S.state.inventory && S.state.inventory.hosts[k])?"Yes":"No",
+    seenNow.has(k)?"Yes":"No", ever.has(k)?"Yes":"No", openBy[k]||0
+  ]);
+  return csv([head].concat(rows));
+}
+
+/* ============================ final report ============================ */
+function finalReport(){
+  const st=S.state, run=st.runs[st.runs.length-1];
+  if(!run){ msg("exportMsg","Load a run first.","err"); return; }
+  const all=enrich(), open=all.filter(f=>f.state==="open");
+  const cov=coverage(), hasInv=!!st.inventory;
+  const breach=open.filter(f=>f.slaStatus==="Breached").sort((a,b)=>b.age-a.age);
+  const closedThisRun=all.filter(f=>f.remediatedOn===run.scanDate);
+  const newThisRun=open.filter(f=>f.openedInRun===run.id);
+
+  const buckets=["0–7","8–30","31–60","61–90","90+"].map(b=>({ b, n:open.filter(f=>f.bucket===b).length }));
+  const sevOrder=["Critical","High","Medium","Low","Info"];
+  const sev={}; open.forEach(f=>{ const s=f.severity||"Not stated"; sev[s]=(sev[s]||0)+1; });
+  const sevRows=Object.keys(sev).sort((a,b)=>{
+    const i=sevOrder.indexOf(a), j=sevOrder.indexOf(b);
+    return (i<0?99:i)-(j<0?99:j);
+  }).map(s=>[s,sev[s]]);
+
+  const groupRows=(field)=>{
+    const by={};
+    open.forEach(f=>{ const g=f[field]||"(not recorded)";
+      const o=by[g]||(by[g]={ g, open:0, breach:0, hosts:new Set() });
+      o.open++; if(f.slaStatus==="Breached") o.breach++; o.hosts.add(f.host); });
+    return Object.values(by).sort((a,b)=>b.breach-a.breach||b.open-a.open)
+      .map(r=>[r.g, r.hosts.size, r.open, r.breach]);
+  };
+
+  const t=(head,rows)=> '<table><thead><tr>'+head.map(h=>'<th>'+esc(h)+'</th>').join("")+
+    '</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+esc(c)+'</td>').join("")+'</tr>').join("")+'</tbody></table>';
+
+  const html='<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'+
+  '<title>Middleware compliance report — '+esc(run.scanDate)+'</title><style>'+
+  'body{font-family:"Segoe UI",system-ui,Arial,sans-serif;color:#14181F;max-width:1000px;margin:0 auto;padding:34px 24px 70px;line-height:1.5;font-variant-numeric:tabular-nums}'+
+  'h1{font-size:25px;margin:0 0 4px;letter-spacing:-.02em}h2{font-size:17px;margin:32px 0 10px;padding-bottom:6px;border-bottom:1px solid #D8DBD4}'+
+  'h3{font-size:14px;margin:20px 0 6px}.sub{color:#5B6472;font-size:13.5px;margin:0 0 20px}'+
+  'table{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0 14px}'+
+  'th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #E4E6E1}th{font-size:12px;color:#5B6472;background:#F1F2EF}'+
+  '.meta{background:#F1F2EF;border:1px solid #D8DBD4;padding:14px 16px;font-size:13px;margin-bottom:20px}'+
+  '.meta div{margin:2px 0}.figs{display:flex;flex-wrap:wrap;gap:1px;background:#D8DBD4;border:1px solid #D8DBD4;margin:12px 0 20px}'+
+  '.f{background:#fff;padding:13px 16px;flex:1 1 128px}.f b{display:block;font-size:27px;font-weight:600;letter-spacing:-.03em}'+
+  '.f span{font-size:12px;color:#5B6472}.r{color:#A4262C}.o{color:#8A5A00}.g{color:#14634A}'+
+  'p{color:#5B6472;font-size:13.5px;max-width:82ch}.note{font-size:12.5px;color:#5B6472;border-left:3px solid #B9BEB4;padding:8px 12px;margin:10px 0}'+
+  '@media print{body{padding:0}h2{break-after:avoid}table{break-inside:auto}tr{break-inside:avoid}}'+
+  '</style></head><body>'+
+  '<h1>Middleware compliance report</h1>'+
+  '<p class="sub">Scan date '+esc(run.scanDate)+' · prepared '+esc(new Date().toISOString().slice(0,10))+'</p>'+
+  '<div class="meta">'+
+    '<div>Source export: '+esc(run.source)+'</div>'+
+    '<div>Inventory: '+esc(run.inventorySource||"not used")+'</div>'+
+    '<div>Prepared by: '+esc(run.operator)+'</div>'+
+    '<div>Rows read: '+run.rows+' across '+run.hosts+' hosts'+(run.unreadable?', '+run.unreadable+' ignored as unreadable':'')+'</div>'+
+    '<div>Remediation SLA: '+run.slaDays+' days from first found</div>'+
+    '<div>Tracking started: '+esc(st.trackingStart)+' · run '+run.id+' of '+st.runs.length+'</div>'+
+  '</div>'+
+  '<div class="figs">'+
+    '<div class="f"><b class="r">'+breach.length+'</b><span>Past SLA</span></div>'+
+    '<div class="f"><b class="o">'+open.filter(f=>f.slaStatus==="Due soon").length+'</b><span>Due within 7 days</span></div>'+
+    '<div class="f"><b>'+open.filter(f=>f.kind==="Failure").length+'</b><span>Open failures</span></div>'+
+    '<div class="f"><b class="o">'+open.filter(f=>f.kind==="Warning").length+'</b><span>Open warnings</span></div>'+
+    '<div class="f"><b>'+newThisRun.length+'</b><span>New this run</span></div>'+
+    '<div class="f"><b class="g">'+closedThisRun.length+'</b><span>Closed this run</span></div>'+
+    (cov.pct!==null?'<div class="f"><b class="'+(cov.pct<95?"o":"g")+'">'+cov.pct+'%</b><span>Inventory scanned</span></div>':'')+
+  '</div>'+
+  (hasInv?'<h2>Scan coverage</h2>'+
+    t(["Measure","Hosts"],[
+      ["Hosts in inventory",cov.inventoryCount],
+      ["Scanned in this run",cov.scannedNow],
+      ["In inventory, missing from this run",cov.notScannedNow.length],
+      ["In inventory, never scanned",cov.neverScanned.length],
+      ["Scanned but not inventoried",cov.notInventoried.length]
+    ])+
+    (cov.neverScanned.length?'<h3>Hosts never scanned</h3>'+
+      t(["Host","Owner","Application"],cov.neverScanned.sort().map(h=>[h,invAttr(h,"owner"),invAttr(h,"app")])):'')+
+    (cov.notInventoried.length?'<h3>Scanned but not in the inventory</h3>'+
+      t(["Host"],cov.notInventoried.sort().map(h=>[h])):'')
+  :'')+
+  '<h2>Ageing of open findings</h2>'+
+  t(["Age, days","Findings"],buckets.map(b=>[b.b,b.n]))+
+  t(["Severity","Open findings"],sevRows)+
+  (hasInv?'<h2>Open findings by owner</h2>'+t(["Owner or support group","Hosts","Open","Past SLA"],groupRows("owner"))+
+    '<h2>Open findings by application</h2>'+t(["Application or service","Hosts","Open","Past SLA"],groupRows("app")):'')+
+  '<h2>Findings past SLA</h2>'+
+  (breach.length? t(["Host"].concat(hasInv?["Owner","Application"]:[]).concat(["Rule ID","Rule name","Severity","First found","Age","Days over"]),
+    breach.map(f=>[f.host].concat(hasInv?[f.owner,f.app]:[])
+      .concat([f.ruleId,f.ruleName||"",f.severity||"",f.firstFound+(f.baseline?" (baseline)":""),f.age,f.over])))
+    : '<p>No open finding has exceeded the remediation SLA.</p>')+
+  '<h2>All open findings</h2>'+
+  t(["Host"].concat(hasInv?["Owner","Application"]:[]).concat(["Rule ID","Rule name","Result","Severity","First found","Age","SLA status"]),
+    open.sort((a,b)=>b.age-a.age).map(f=>[f.host].concat(hasInv?[f.owner,f.app]:[])
+      .concat([f.ruleId,f.ruleName||"",f.kind,f.severity||"",f.firstFound+(f.baseline?" (baseline)":""),f.age,f.slaStatus])))+
+  (closedThisRun.length?'<h2>Remediated in this run</h2>'+
+    t(["Host","Rule ID","Rule name","First found","Closed","Days open"],
+      closedThisRun.map(f=>[f.host,f.ruleId,f.ruleName||"",f.firstFound,f.remediatedOn,f.age])):'')+
+  '<h2>Basis of preparation</h2>'+
+  '<p>The compliance export carries only the latest scan result. First-found dates are maintained separately by the tracker: a failure is dated from the run in which it first appeared, keeps that date while it persists, and is closed when the rule next passes. A finding that fails again after closure starts a new cycle with a new date.</p>'+
+  (run.codedResults?'<p>Results in the source export are numeric: 0 is read as pass, 1 as warning and 2 as failed. '+
+    (run.warnMode==="ignore"
+      ? 'Warnings were excluded from this run at the preparer\u2019s direction'+(run.warningsIgnored?' ('+run.warningsIgnored+' rows)':'')+'.'
+      : 'Warnings are tracked as findings and aged on the same basis as failures, and are shown separately throughout.')+'</p>':'')+
+  '<p>Findings present on the first tracked run are marked baseline and dated from '+esc(st.trackingStart)+'. Their true age is older than shown. Hosts absent from an export are not treated as remediated; their findings remain open and the hosts are reported under coverage.</p>'+
+  (st.changes.length?'<h3>Corrections recorded</h3>'+
+    t(["When","By","Action","Detail","Count","Reason"],
+      st.changes.slice(-30).reverse().map(c=>[c.at.slice(0,16).replace("T"," "),c.operator,c.kind,c.detail,c.count,c.reason])):'')+
+  '<h3>Run history</h3>'+
+  t(["Run","Scan date","Prepared by","Source","Hosts","New","Remediated","Reopened"],
+    [...st.runs].reverse().map(r=>[r.id,r.scanDate,r.operator,r.source,r.hosts,r.newFindings,r.remediated,r.reopened]))+
+  '</body></html>';
+
+  download("compliance-report-"+run.scanDate+".html", html, "text/html");
+  msg("exportMsg","Report built for run "+run.id+" ("+run.scanDate+"). Open it in a browser to read or print to PDF.","good");
+}
+
+/* ============================ wiring ============================ */
+$("runDate").value=todayISO();
+$("runDate").addEventListener("input",e=>e.target.dataset.touched="1");
+
+$("btnNewState").onclick=()=>{
+  if(S.state&&S.state.runs.length&&!confirm("Discard the tracking file currently loaded and start again from nothing?")) return;
+  S.state=newState(); S.stateHandle=null; S.selected.clear();
+  $("st1").className="step done"; $("secInv").hidden=false;
+  $("h1").textContent="New file, tracking from "+S.state.trackingStart;
+  msg("stateMsg","Tracking starts today. Everything failing in the first export is marked baseline dated, because its true start date cannot be known.","warn");
+  renderAll();
+};
+$("btnOpenState").onclick=async()=>{
+  if(window.showOpenFilePicker){
+    try{
+      const [h]=await window.showOpenFilePicker({ types:[{ description:"Tracking file", accept:{ "application/json":[".json"] }}] });
+      const file=await h.getFile();
+      applyState(JSON.parse(await file.text()), file.name); S.stateHandle=h; return;
+    }catch(e){ if(e&&e.name==="AbortError") return; }
+  }
+  $("stateInput").click();
+};
+$("stateInput").onchange=async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  try{ applyState(JSON.parse(await file.text()), file.name); }
+  catch(err){ msg("stateMsg","Could not read that tracking file: "+err.message,"err"); }
+  e.target.value="";
+};
+function applyState(obj,name){
+  try{
+    S.state=validateState(obj); S.selected.clear();
+    $("slaDays").value=S.state.slaDays;
+    $("st1").className="step done"; $("secInv").hidden=false;
+    if(S.state.inventory){ $("st2").className="step done"; $("secImport").hidden=false; }
+    const last=S.state.runs[S.state.runs.length-1];
+    $("h1").textContent = last ? "Last run "+last.scanDate+" by "+last.operator : "No runs recorded yet";
+    msg("stateMsg","Loaded "+name+".","good");
+    renderAll();
+  }catch(err){ msg("stateMsg",err.message,"err"); }
+}
+
+/* inventory */
+function wireDrop(dropId,inputId,handler){
+  $(dropId).onclick=()=>$(inputId).click();
+  $(inputId).onchange=e=>{ if(e.target.files[0]) handler(e.target.files[0]); e.target.value=""; };
+  ["dragenter","dragover"].forEach(ev=>$(dropId).addEventListener(ev,e=>{ e.preventDefault(); $(dropId).classList.add("over"); }));
+  ["dragleave","drop"].forEach(ev=>$(dropId).addEventListener(ev,e=>{ e.preventDefault(); $(dropId).classList.remove("over"); }));
+  $(dropId).addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) handler(f); });
+}
+wireDrop("invDrop","invInput",async file=>{
+  msg("invMsg","");
+  try{
+    const grid=await readAnyFile(file);
+    const { headers }=rowsToObjects(grid);
+    if(!headers.length){ msg("invMsg","No columns found in that file.","err"); return; }
+    S.invGrid=grid; S.invHeaders=headers; S.invSource=file.name;
+    S.invMapping=autoMap(headers,INV_FIELDS);
+    $("invMapWrap").hidden=false;
+    renderInvMaps();
+  }catch(e){
+    msg("invMsg", e.message==="nodecomp"
+      ? "This browser cannot open Excel files. Save the inventory as CSV and try again."
+      : "Could not read that file: "+e.message,"err");
+  }
+});
+$("btnInvApply").onclick=applyInventory;
+$("btnInvCancel").onclick=()=>{ $("invMapWrap").hidden=true; S.invGrid=null; msg("invMsg",""); };
+$("btnInvSkip").onclick=()=>{ $("st2").className="step skip"; $("secImport").hidden=false; $("secImport").scrollIntoView({behavior:"smooth",block:"start"}); };
+$("btnInvClear").onclick=()=>{
+  const reason=prompt("Removing the stored inventory. Coverage reporting will stop until a new one is loaded.\n\nWhy? (recorded in the change log)");
+  if(reason===null) return;
+  S.state.inventory=null;
+  logChange("inventory-removed","",reason.trim()||"not stated",0);
+  msg("invMsg","Inventory removed.","warn");
+  renderAll();
+};
+
+/* raw export */
+wireDrop("drop","fileInput",async file=>{
+  S.sourceName=file.name; msg("importMsg","");
+  try{ acceptGrid(await readAnyFile(file), file.name); }
+  catch(e){
+    msg("importMsg", e.message==="nodecomp"
+      ? "This browser cannot open Excel files. Save the export as CSV and try again."
+      : "Could not read that file: "+e.message+". Saving the export as CSV usually resolves it.","err");
+  }
+});
+function acceptGrid(grid,label){
+  const { headers, rows }=rowsToObjects(grid);
+  if(!rows.length){ msg("importMsg","No data rows found in that file.","err"); return; }
+  S.headers=headers; S.rows=rows; S.mapping=autoMap(headers,FIELDS);
+  $("st3").className="step done";
+  $("h4").textContent=rows.length+" rows, "+headers.length+" columns, from "+label;
+  $("secMap").hidden=false; renderMaps();
+  $("secMap").scrollIntoView({ behavior:"smooth", block:"start" });
+}
+$("btnPasteToggle").onclick=()=>{ $("pasteBox").hidden=!$("pasteBox").hidden; };
+$("btnPasteLoad").onclick=()=>{
+  const t=$("pasteArea").value;
+  if(!t.trim()){ msg("importMsg","Nothing pasted yet.","err"); return; }
+  S.sourceName="pasted rows"; acceptGrid(parseDelimited(t),"pasted rows");
+};
+
+$("btnMerge").onclick=()=>{
+  if(!checkMapping()) return;
+  const r=merge();
+  let text="Run recorded: "+r.nNew+" new, "+r.nStill+" still failing, "+r.nClosed+" remediated, "+r.nReopened+" reopened, across "+r.hosts+" hosts.";
+  if(r.notScanned) text+=" "+r.notScanned+" inventory host(s) were not in this export.";
+  if(r.notInventoried) text+=" "+r.notInventoried+" scanned host(s) are not in the inventory.";
+  if(r.nWarn) text+=" "+r.nWarn+" of these are warnings.";
+  if(r.nWarnIgnored) text+=" "+r.nWarnIgnored+" warnings were excluded.";
+  if(r.nOther+r.nSkipped) text+=" "+(r.nOther+r.nSkipped)+" rows ignored as unreadable.";
+  if(r.isFirstRun) text+=" All findings from this first run are baseline dated.";
+  text+=" If this was the wrong file, revert it on the corrections tab.";
+  msg("runMsg",text,"good");
+  $("st5").className="step done";
+  S.selected.clear(); renderAll();
+  $("secExport").scrollIntoView({ behavior:"smooth", block:"center" });
+};
+
+$("btnSaveState").onclick=async()=>{
+  const text=JSON.stringify(S.state,null,2);
+  if(S.stateHandle){
+    try{ const w=await S.stateHandle.createWritable(); await w.write(text); await w.close();
+      msg("exportMsg","Saved back to the tracking file.","good"); return; }catch(e){}
+  }
+  if(window.showSaveFilePicker){
+    try{
+      const h=await window.showSaveFilePicker({ suggestedName:"compliance-tracking.json",
+        types:[{ description:"Tracking file", accept:{ "application/json":[".json"] }}] });
+      const w=await h.createWritable(); await w.write(text); await w.close();
+      S.stateHandle=h; msg("exportMsg","Saved. Put this file back on the shared drive.","good"); return;
+    }catch(e){ if(e&&e.name==="AbortError") return; }
+  }
+  download("compliance-tracking.json",text,"application/json");
+};
+$("btnReport").onclick=finalReport;
+$("btnCsvFindings").onclick=()=>download("findings-"+todayISO()+".csv",findingsSheet(),"text/csv");
+$("btnCsvCoverage").onclick=()=>download("coverage-"+todayISO()+".csv",coverageSheet(),"text/csv");
+$("btnCsvRuns").onclick=()=>{
+  const head=["Run","Ran At","Scan Date","Run By","Source File","Inventory","Rows","Hosts","New","Still Failing","Remediated","Reopened","Ignored","SLA Days"];
+  download("run-log-"+todayISO()+".csv", csv([head].concat(S.state.runs.map(r=>[r.id,r.ranAt,r.scanDate,r.operator,r.source,
+    r.inventorySource||"",r.rows,r.hosts,r.newFindings,r.stillFailing,r.remediated,r.reopened,r.unreadable||0,r.slaDays]))),"text/csv");
+};
+$("tabs").onclick=e=>{
+  const b=e.target.closest(".tab"); if(!b) return;
+  S.tab=b.dataset.tab;
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t===b));
+  renderTab();
+};
+$("slaDays").onchange=()=>{ if(S.state){ S.state.slaDays=Math.max(1,parseInt($("slaDays").value,10)||30); renderAll(); } };
+window.addEventListener("beforeunload",e=>{ if(S.state&&S.state.runs.length){ e.preventDefault(); e.returnValue=""; } });
+</script>
+</body>
+</html>

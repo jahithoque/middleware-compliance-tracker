@@ -1,0 +1,23 @@
+# Tracking files, scan exports and inventories carry host names and asset
+# ownership. Nothing in these formats belongs in a public repo. Add synthetic
+# fixtures explicitly with `git add -f`.
+*.json
+*.csv
+*.tsv
+*.xlsx
+*.xlsm
+*.xls
+
+# Generated reports
+*-report-*.html
+report-*.html
+
+# Working notes with environment-specific context
+CLAUDE.md
+
+# OS and editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
