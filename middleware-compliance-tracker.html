@@ -74,6 +74,10 @@
   .maps{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:13px}
   .mapcard{border:1px solid var(--line);padding:11px 12px}
   .build{font-size:11.5px;font-weight:400;color:var(--ink-soft);font-family:ui-monospace,Menlo,Consolas,monospace;margin-left:8px;vertical-align:middle}
+  .filelist{margin-top:12px;border:1px solid var(--line);background:var(--panel)}
+  .filelist table{width:100%}
+  .filelist td:first-child{white-space:normal}
+  .filelist button{padding:3px 9px;font-size:12.5px}
   .slatable{width:auto}
   .slatable th,.slatable td{white-space:nowrap}
   .slatable input[type=number]{min-width:0;width:82px;padding:5px 7px;font-size:13px}
@@ -227,10 +231,12 @@
   <div class="shead"><span class="step" id="st3">3</span><h2>Raw compliance export</h2>
     <span class="hint">CSV, Excel, or text pasted from the screen</span></div>
   <div class="sbody">
-    <div class="drop" id="drop">Drop the raw export here, or click to choose a file</div>
-    <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.xlsx,.xlsm" hidden>
+    <div class="drop" id="drop">Drop the raw export files here, or click to choose them. Where the export came out in batches, load every batch for the same scan; they are combined into one run.</div>
+    <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.xlsx,.xlsm" multiple hidden>
+    <div id="fileList" hidden></div>
     <div class="row" style="margin-top:12px">
       <button class="quiet" id="btnPasteToggle">Paste instead</button>
+      <button class="quiet" id="btnFilesClear" hidden>Clear all files</button>
     </div>
     <div id="pasteBox" hidden style="margin-top:10px">
       <textarea id="pasteArea" placeholder="Paste the rows here, including the header line."></textarea>
@@ -302,10 +308,10 @@
 
 /* ============================ state ============================ */
 // Bump on every release so a user can tell which copy of the file they have open.
-const BUILD="2026-09-17.4";
+const BUILD="2026-09-17.5";
 const S = {
   state:null, stateHandle:null,
-  rows:[], headers:[], mapping:{}, sourceName:"",
+  rows:[], headers:[], mapping:{}, sourceName:"", files:[],
   invGrid:null, invHeaders:[], invMapping:{}, invSource:"",
   lastMerge:null, tab:"findings", statusCodes:false, warnMode:"finding",
   sort:{ key:"age", dir:-1 },
@@ -699,8 +705,12 @@ function merge(){
 
   const warnMode=($("warnMode").value)||"finding";
   S.warnMode=warnMode;
-  let nNew=0,nClosed=0,nReopened=0,nStill=0,nOther=0,nSkipped=0,nWarn=0,nWarnIgnored=0;
+  let nNew=0,nClosed=0,nReopened=0,nStill=0,nOther=0,nSkipped=0,nWarn=0,nWarnIgnored=0,nDup=0;
 
+  // One row per host, instance and rule. The same check can appear in more than one
+  // batch of an export; the worst result wins, since a check that failed anywhere failed.
+  const rank={ fail:3, warn:2, pass:1 };
+  const best=new Map();
   for(const r of S.rows){
     const host=String(r[m.host]||"").trim();
     const ruleId=String(r[m.ruleId]||"").trim();
@@ -708,6 +718,12 @@ function merge(){
     if(!host||!ruleId){ nSkipped++; continue; }
     const status=normStatus(r[m.status]);
     if(status==="other"){ nOther++; continue; }
+    const k=keyOf(host,ruleId,instance), prev=best.get(k);
+    if(prev){ nDup++; if(rank[status]<=rank[prev.status]) continue; }
+    best.set(k,{ r, host, ruleId, instance, status });
+  }
+
+  for(const { r, host, ruleId, instance, status } of best.values()){
     if(status==="warn"){
       if(warnMode==="ignore"){ nWarnIgnored++; seenHosts.add(lc(host)); continue; }
       nWarn++;
@@ -755,8 +771,9 @@ function merge(){
   const hostList=[...seenHosts];
   const run={ id:st.runs.length+1, ranAt:new Date().toISOString(), scanDate:runDate, operator,
     source:S.sourceName||"pasted rows", rows:S.rows.length, hosts:hostList.length, hostList,
+    sourceFiles:S.files.map(f=>({ name:f.name, rows:f.rows.length })),
     newFindings:nNew, stillFailing:nStill, remediated:nClosed, reopened:nReopened,
-    unreadable:nOther+nSkipped, warnings:nWarn, warningsIgnored:nWarnIgnored, warnMode,
+    unreadable:nOther+nSkipped, duplicateRows:nDup, warnings:nWarn, warningsIgnored:nWarnIgnored, warnMode,
     codedResults:!!S.statusCodes, slaPolicy:JSON.parse(JSON.stringify(st.slaPolicy)), undo:journal,
     inventorySource: st.inventory ? st.inventory.source : null };
   st.runs.push(run);
@@ -764,7 +781,7 @@ function merge(){
   st.runs.slice(0,-10).forEach(r=>{ if(r.undo) delete r.undo; });
 
   const cov=coverage();
-  S.lastMerge={ nNew,nClosed,nReopened,nStill,nOther,nSkipped,nWarn,nWarnIgnored,
+  S.lastMerge={ nNew,nClosed,nReopened,nStill,nOther,nSkipped,nWarn,nWarnIgnored,nDup,files:S.files.length,
     hosts:hostList.length,isFirstRun,
     notScanned:cov.notScannedNow.length, notInventoried:cov.notInventoried.length };
   return S.lastMerge;
@@ -1286,9 +1303,9 @@ function coverageRows(){
   return { head, rows };
 }
 function runRows(){
-  const head=["Run","Ran At (UTC)","Scan Date","Run By","Source File","Inventory","Rows","Hosts","New","Still Failing",
+  const head=["Run","Ran At (UTC)","Scan Date","Run By","Source Files","Files","Inventory","Rows","Duplicate Rows","Hosts","New","Still Failing",
     "Remediated","Reopened","Warnings","Warnings Excluded","Warning Handling","Unreadable","Numeric Results","SLA Policy"];
-  const rows=S.state.runs.map(r=>[r.id, { dt:r.ranAt }, { d:r.scanDate }, r.operator, r.source, r.inventorySource||"", r.rows, r.hosts,
+  const rows=S.state.runs.map(r=>[r.id, { dt:r.ranAt }, { d:r.scanDate }, r.operator, r.source, (r.sourceFiles||[]).length||1, r.inventorySource||"", r.rows, r.duplicateRows||0, r.hosts,
     r.newFindings, r.stillFailing, r.remediated, r.reopened, r.warnings||0, r.warningsIgnored||0,
     r.warnMode==="ignore"?"Excluded":"Tracked as findings", r.unreadable||0, yn(!!r.codedResults),
     r.slaPolicy ? slaSummary(cleanSlaPolicy(r.slaPolicy)) : (r.slaDays!=null ? r.slaDays+" days, all findings" : "")]);
@@ -1593,7 +1610,7 @@ function dashboardSheet(){
   blank();
   [["Source export",run.source],
    ["Inventory",run.inventorySource||"not used"],
-   ["Rows read",run.rows+" across "+run.hosts+" hosts"+(run.unreadable?", "+run.unreadable+" ignored as unreadable":"")],
+   ["Rows read",run.rows+" across "+run.hosts+" hosts"+(run.sourceFiles&&run.sourceFiles.length>1?" from "+run.sourceFiles.length+" files":"")+(run.duplicateRows?", "+run.duplicateRows+" duplicates collapsed":"")+(run.unreadable?", "+run.unreadable+" ignored as unreadable":"")],
    ["Remediation SLA","by severity and network zone, days from first found; policy table below"],
    ["Tracking started",st.trackingStart],
    ["Warnings",run.warnMode==="ignore" ? "excluded from this run"+(run.warningsIgnored?" ("+run.warningsIgnored+" rows)":"") : "tracked as findings and aged like failures"]
@@ -1777,7 +1794,7 @@ function finalReport(){
     '<div>Source export: '+esc(run.source)+'</div>'+
     '<div>Inventory: '+esc(run.inventorySource||"not used")+'</div>'+
     '<div>Prepared by: '+esc(run.operator)+'</div>'+
-    '<div>Rows read: '+run.rows+' across '+run.hosts+' hosts'+(run.unreadable?', '+run.unreadable+' ignored as unreadable':'')+'</div>'+
+    '<div>Rows read: '+run.rows+' across '+run.hosts+' hosts'+(run.sourceFiles&&run.sourceFiles.length>1?' from '+run.sourceFiles.length+' files':'')+(run.duplicateRows?', '+run.duplicateRows+' duplicate rows collapsed, worst result kept':'')+(run.unreadable?', '+run.unreadable+' ignored as unreadable':'')+'</div>'+
     '<div>Remediation SLA: by severity and network zone, days from first found (policy in basis of preparation)</div>'+
     '<div>Tracking started: '+esc(st.trackingStart)+' · run '+run.id+' of '+st.runs.length+'</div>'+
   '</div>'+
@@ -1886,10 +1903,10 @@ function applyState(obj,name){
 /* inventory */
 function wireDrop(dropId,inputId,handler){
   $(dropId).onclick=()=>$(inputId).click();
-  $(inputId).onchange=e=>{ if(e.target.files[0]) handler(e.target.files[0]); e.target.value=""; };
+  $(inputId).onchange=e=>{ if(e.target.files[0]) handler(e.target.files[0],[...e.target.files]); e.target.value=""; };
   ["dragenter","dragover"].forEach(ev=>$(dropId).addEventListener(ev,e=>{ e.preventDefault(); $(dropId).classList.add("over"); }));
   ["dragleave","drop"].forEach(ev=>$(dropId).addEventListener(ev,e=>{ e.preventDefault(); $(dropId).classList.remove("over"); }));
-  $(dropId).addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) handler(f); });
+  $(dropId).addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) handler(f,[...e.dataTransfer.files]); });
 }
 wireDrop("invDrop","invInput",async file=>{
   msg("invMsg","");
@@ -1920,29 +1937,75 @@ $("btnInvClear").onclick=()=>{
 };
 
 /* raw export */
-wireDrop("drop","fileInput",async file=>{
-  S.sourceName=file.name; msg("importMsg","");
-  try{ acceptGrid(await readAnyFile(file), file.name); }
-  catch(e){
-    msg("importMsg", e.message==="nodecomp"
-      ? "This browser cannot open Excel files. Save the export as CSV and try again."
-      : "Could not read that file: "+e.message+". Saving the export as CSV usually resolves it.","err");
+wireDrop("drop","fileInput",async (first,files)=>{
+  msg("importMsg","");
+  const problems=[];
+  for(const file of files){
+    try{ const r=acceptGrid(await readAnyFile(file), file.name); if(r) problems.push(r); }
+    catch(e){
+      problems.push(file.name+": "+(e.message==="nodecomp"
+        ? "this browser cannot open Excel files. Save the export as CSV and try again."
+        : "could not read it ("+e.message+"). Saving the export as CSV usually resolves it."));
+    }
   }
+  if(problems.length) msg("importMsg",problems.join(" "),"err");
 });
+// Adds one export to the run being assembled. Batches must share the same columns.
+// Returns a message if the file was refused, otherwise nothing.
 function acceptGrid(grid,label){
   const { headers, rows }=rowsToObjects(grid);
-  if(!rows.length){ msg("importMsg","No data rows found in that file.","err"); return; }
-  S.headers=headers; S.rows=rows; S.mapping=autoMap(headers,FIELDS);
+  if(!rows.length) return label+": no data rows found.";
+  if(S.files.length){
+    const have=new Set(S.headers), same=headers.length===have.size && headers.every(h=>have.has(h));
+    if(!same) return label+": its columns differ from "+S.files[0].name+", so it was not added. Batches of one export must share the same columns.";
+    if(S.files.some(f=>f.name===label)) return label+" is already loaded.";
+  }else{
+    S.headers=headers; S.mapping=autoMap(headers,FIELDS);
+  }
+  S.files.push({ name:label, rows });
+  S.rows=S.files.flatMap(f=>f.rows);
+  S.sourceName=S.files.map(f=>f.name).join(" + ");
+  renderFileList();
   $("st3").className="step done";
-  $("h4").textContent=rows.length+" rows, "+headers.length+" columns, from "+label;
+  $("h4").textContent=S.rows.length+" rows, "+S.headers.length+" columns, from "+(S.files.length===1?label:S.files.length+" files");
   $("secMap").hidden=false; renderMaps();
-  $("secMap").scrollIntoView({ behavior:"smooth", block:"start" });
+  if(S.files.length===1) $("secMap").scrollIntoView({ behavior:"smooth", block:"start" });
 }
+function renderFileList(){
+  const box=$("fileList");
+  box.hidden=!S.files.length; $("btnFilesClear").hidden=!S.files.length;
+  if(!S.files.length) return;
+  const hosts=new Set();
+  if(S.mapping.host) S.rows.forEach(r=>{ const h=lc(r[S.mapping.host]); if(h) hosts.add(h); });
+  box.className="filelist";
+  box.innerHTML='<table><thead><tr><th class="nosort">Loaded for this run</th><th class="nosort">Rows</th><th class="nosort"></th></tr></thead><tbody>'+
+    S.files.map((f,i)=>'<tr><td>'+esc(f.name)+'</td><td>'+f.rows.length+'</td><td><button class="quiet" data-i="'+i+'">Remove</button></td></tr>').join("")+
+    '<tr><td style="color:var(--ink-soft)">'+S.files.length+' file'+(S.files.length===1?'':'s')+(hosts.size?', '+hosts.size+' distinct hosts':'')+'</td><td style="font-weight:600">'+S.rows.length+'</td><td></td></tr>'+
+    '</tbody></table>';
+  box.querySelectorAll("button[data-i]").forEach(b=>b.onclick=()=>removeFile(+b.dataset.i));
+}
+function removeFile(i){
+  S.files.splice(i,1);
+  if(!S.files.length){ clearFiles(); return; }
+  S.rows=S.files.flatMap(f=>f.rows); S.sourceName=S.files.map(f=>f.name).join(" + ");
+  renderFileList();
+  $("h4").textContent=S.rows.length+" rows, "+S.headers.length+" columns, from "+(S.files.length===1?S.files[0].name:S.files.length+" files");
+  checkMapping();
+}
+function clearFiles(){
+  S.files=[]; S.rows=[]; S.headers=[]; S.mapping={}; S.sourceName="";
+  renderFileList(); msg("importMsg","");
+  $("st3").className="step"; $("h4").textContent="";
+  $("secMap").hidden=true; $("secRun").hidden=true; $("st4").className="step";
+}
+$("btnFilesClear").onclick=clearFiles;
 $("btnPasteToggle").onclick=()=>{ $("pasteBox").hidden=!$("pasteBox").hidden; };
 $("btnPasteLoad").onclick=()=>{
   const t=$("pasteArea").value;
   if(!t.trim()){ msg("importMsg","Nothing pasted yet.","err"); return; }
-  S.sourceName="pasted rows"; acceptGrid(parseDelimited(t),"pasted rows");
+  const n=S.files.filter(f=>/^pasted rows/.test(f.name)).length;
+  const r=acceptGrid(parseDelimited(t),"pasted rows"+(n?" "+(n+1):""));
+  if(r) msg("importMsg",r,"err"); else $("pasteArea").value="";
 };
 
 $("btnMerge").onclick=()=>{
@@ -1954,11 +2017,14 @@ $("btnMerge").onclick=()=>{
   if(r.nWarn) text+=" "+r.nWarn+" of these are warnings.";
   if(r.nWarnIgnored) text+=" "+r.nWarnIgnored+" warnings were excluded.";
   if(r.nOther+r.nSkipped) text+=" "+(r.nOther+r.nSkipped)+" rows ignored as unreadable.";
+  if(r.nDup) text+=" "+r.nDup+" duplicate rows collapsed, worst result kept.";
+  if(r.files>1) text+=" "+r.files+" files were combined.";
   if(r.isFirstRun) text+=" All findings from this first run are baseline dated.";
   text+=" If this was the wrong file, revert it on the corrections tab.";
   msg("runMsg",text,"good");
   $("st5").className="step done";
   S.selected.clear(); renderAll();
+  clearFiles();
   $("secExport").scrollIntoView({ behavior:"smooth", block:"center" });
 };
 

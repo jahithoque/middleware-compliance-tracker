@@ -10,7 +10,7 @@ Compliance platforms commonly export a flat list of host, rule ID, rule name and
 
 ## What it does
 
-- Reads a raw compliance export: CSV, TSV, Excel (.xlsx/.xlsm), or text pasted from the screen
+- Reads a raw compliance export: CSV, TSV, Excel (.xlsx/.xlsm), or text pasted from the screen — and combines several files into one run where the export tool splits a scan into batches
 - Joins it to a device inventory to carry owner, application, environment, platform, network zone and middleware type onto every finding
 - Assigns and preserves first-found dates across runs, closes findings when the rule passes, and opens a new cycle when a closed finding fails again
 - Ages every open finding against an SLA policy set by severity and network zone, and reports breaches, near-breaches and ageing buckets
@@ -33,7 +33,7 @@ Compliance platforms commonly export a flat list of host, rule ID, rule name and
 1. Open `middleware-compliance-tracker.html` in Chrome or Edge.
 2. Open an existing tracking file, or start a new one.
 3. Load the device inventory. It is stored inside the tracking file and only needs reloading when it changes.
-4. Load the raw compliance export. Columns are matched automatically and can be corrected. Host, rule ID and result are required; rule name, severity, last scan date, instance, test scope and additional data are carried through when present.
+4. Load the raw compliance export, or all the batches of it if the export came out in several files. Columns are matched automatically and can be corrected. Host, rule ID and result are required; rule name, severity, last scan date, instance, test scope and additional data are carried through when present.
 5. Check the remediation SLA policy under the tracking file section, set the scan date and operator, then load the run.
 6. Save the tracking file, then build the Excel workbook or the HTML report.
 
