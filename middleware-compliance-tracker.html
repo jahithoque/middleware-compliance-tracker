@@ -268,12 +268,11 @@
   <div class="sbody">
     <div class="row">
       <button id="btnSaveState">Save tracking file</button>
+      <button class="ghost" id="btnXlsx">Excel workbook</button>
       <button class="ghost" id="btnReport">Build final report</button>
-      <button class="ghost" id="btnCsvFindings">Findings sheet, CSV</button>
-      <button class="quiet" id="btnCsvCoverage">Coverage, CSV</button>
-      <button class="quiet" id="btnCsvRuns">Run log, CSV</button>
+      <button class="quiet" id="btnCsvFindings">Findings, CSV</button>
     </div>
-    <div class="note">Save the tracking file every time, or this run's dates are lost. The findings sheet keeps a fixed column order so it pastes straight into the data sheet of the existing workbook. The final report is a standalone HTML file covering the run just loaded.</div>
+    <div class="note">Save the tracking file every time, or this run's dates are lost. The Excel workbook has a dashboard with charts, the full findings sheet carrying every mapped export and inventory field, scan coverage, the run log and the change log. The findings sheet keeps a fixed column order, so it can still be pasted into an existing pivot workbook. The final report is a standalone HTML file covering the run just loaded.</div>
     <div id="exportMsg"></div>
   </div>
 </section>
@@ -297,30 +296,56 @@ const S = {
 const FIELDS = [
   { key:"host", label:"Host", required:true,
     hints:["host","hostname","computer","computername","device","machine","asset","endpoint","fqdn","server","system name","node"] },
+  { key:"instance", label:"Instance", required:false,
+    hints:["instance","instance name","instancename","mw instance","middleware instance","profile","cell","domain","listener","service instance"] },
   { key:"ruleId", label:"Rule ID", required:true,
     hints:["rule id","ruleid","rule_id","check id","checkid","control id","ccdid","id","standard id","benchmark id"] },
   { key:"ruleName", label:"Rule name", required:false,
-    hints:["rule name","rulename","rule","check name","name","title","description","control","check"] },
+    hints:["rule name","rulename","rule","description","check name","name","title","control"] },
   { key:"status", label:"Result", required:true,
-    hints:["status","result","state","compliance","compliant","pass/fail","passfail","outcome","finding"] },
+    hints:["final result","finalresult","result","status","state","compliance","compliant","pass/fail","passfail","outcome","finding"] },
   { key:"severity", label:"Severity", required:false,
-    hints:["severity","risk","criticality","priority","impact","level"] },
+    hints:["severity","risk level","risklv","risk lv","risk","criticality","priority","impact","level"] },
   { key:"lastScan", label:"Last scan date", required:false,
-    hints:["last scan","lastscan","scan date","scandate","last seen","lastseen","timestamp","date","checked","evaluated"] }
+    hints:["last check date","lastcheckdate","last scan","lastscan","scan date","scandate","check date","last seen","lastseen","timestamp","date","checked","evaluated"] },
+  { key:"scope", label:"Test scope", required:false,
+    hints:["test scope","testscope","scope","applies to","target"] },
+  { key:"aux", label:"Additional data", required:false,
+    hints:["aux data","auxdata","aux","additional data","evidence","actual value","actual","expected","detail","details","output","remark","remarks","comment","comments"] }
 ];
 
 const INV_FIELDS = [
   { key:"host", label:"Host", required:true,
-    hints:["host","hostname","computer","computername","device","machine","asset","server","fqdn","node","system name"] },
+    hints:["hostname","host","host name","computer","computername","device","machine","asset","server","fqdn","node","system name"] },
   { key:"owner", label:"Owner or support group", required:false,
     hints:["owner","support group","assignment group","custodian","team","responsible","managed by","contact"] },
   { key:"app", label:"Application or service", required:false,
-    hints:["application","app","service","business service","system","platform","middleware","product"] },
+    hints:["production service name","service name","application","app","service","business service","production","system"] },
   { key:"env", label:"Environment", required:false,
-    hints:["environment","env","tier","stage","zone","classification"] },
+    hints:["environment","env","usage","tier","stage","classification"] },
+  { key:"platform", label:"Platform", required:false,
+    hints:["platform","operating system","os","os name"] },
+  { key:"zone", label:"Network zone", required:false,
+    hints:["network zone","networkzone","zone","network","segment","vlan"] },
+  { key:"mwType", label:"Middleware type", required:false,
+    hints:["mw type","mwtype","middleware type","middleware","mw","product","technology","component"] },
   { key:"status", label:"Lifecycle status", required:false,
     hints:["status","state","lifecycle","operational status","install status","active"] }
 ];
+
+// Inventory attributes that findings can be grouped and reported by.
+// [key, label for headings, short column label]. Only mapped ones are shown.
+const GROUP_DIMS = [
+  ["owner","Owner or support group","Owner"],
+  ["app","Application or service","Application"],
+  ["env","Environment","Environment"],
+  ["mwType","Middleware type","Middleware type"],
+  ["zone","Network zone","Network zone"],
+  ["platform","Platform","Platform"]
+];
+function mappedDims(){ const inv=S.state&&S.state.inventory; return inv ? GROUP_DIMS.filter(d=>inv.fields[d[0]]) : []; }
+function tableDims(){ return mappedDims().filter(d=>d[0]==="owner"||d[0]==="app"||d[0]==="env"); }
+function anyInstance(){ return !!S.state && Object.values(S.state.findings).some(f=>f.instance); }
 
 const $ = id => document.getElementById(id);
 const todayISO = () => new Date().toISOString().slice(0,10);
@@ -491,7 +516,7 @@ function normSeverity(v){
   if(/info/.test(s)||s==="0") return "Info";
   return String(v).trim();
 }
-const keyOf=(h,r)=> lc(h)+"\u0000"+lc(r);
+const keyOf=(h,r,i)=> lc(h)+"\u0000"+lc(r)+(i?"\u0000"+lc(i):"");
 
 function autoMap(headers, fields){
   const map={}, used=new Set();
@@ -507,6 +532,7 @@ function autoMap(headers, fields){
         else if(n.replace(/ /g,"")===hint.replace(/ /g,"")) score=95;
         else if(n.startsWith(hint)||n.endsWith(hint)) score=70;
         else if(n.includes(hint)) score=55;
+        if(hint.length<=3 && n!==hint) score=Math.min(score,30);
         if(hint==="id" && n!=="id") score=Math.min(score,20);
         if(hint==="name" && n!=="name") score=Math.min(score,25);
         if(hint==="date" && n!=="date") score=Math.min(score,30);
@@ -569,7 +595,7 @@ function applyInventory(){
     loadedAt:new Date().toISOString(),
     source:S.invSource,
     columns:headers,
-    fields:{ host:m.host, owner:m.owner||"", app:m.app||"", env:m.env||"", status:m.status||"" },
+    fields:{ host:m.host, owner:m.owner||"", app:m.app||"", env:m.env||"", platform:m.platform||"", zone:m.zone||"", mwType:m.mwType||"", status:m.status||"" },
     hosts
   };
   logChange("inventory-loaded", S.invSource + " — " + Object.keys(hosts).length + " hosts", "", Object.keys(hosts).length);
@@ -613,6 +639,7 @@ function merge(){
   for(const r of S.rows){
     const host=String(r[m.host]||"").trim();
     const ruleId=String(r[m.ruleId]||"").trim();
+    const instance=m.instance?String(r[m.instance]||"").trim():"";
     if(!host||!ruleId){ nSkipped++; continue; }
     const status=normStatus(r[m.status]);
     if(status==="other"){ nOther++; continue; }
@@ -621,16 +648,18 @@ function merge(){
       nWarn++;
     }
     seenHosts.add(lc(host));
-    const k=keyOf(host,ruleId);
+    const k=keyOf(host,ruleId,instance);
     const ruleName=m.ruleName?String(r[m.ruleName]||"").trim():"";
     const severity=m.severity?normSeverity(r[m.severity]):"";
     const lastScan=(m.lastScan?normDate(r[m.lastScan]):"")||runDate;
+    const scope=m.scope?String(r[m.scope]||"").trim():"";
+    const aux=m.aux?String(r[m.aux]||"").trim():"";
 
     let f=st.findings[k];
     if(!f){
       if(status==="pass") continue;
       mark(k);
-      st.findings[k]={ host,ruleId,ruleName,severity,
+      st.findings[k]={ host,instance,ruleId,ruleName,severity,scope,aux,
         kind: status==="warn" ? "Warning" : "Failure", state:"open",
         firstFound: isFirstRun ? st.trackingStart : runDate,
         baseline: isFirstRun, lastSeenFail:runDate, lastScan,
@@ -640,6 +669,8 @@ function merge(){
     mark(k);
     if(ruleName) f.ruleName=ruleName;
     if(severity) f.severity=severity;
+    if(scope) f.scope=scope;
+    if(aux) f.aux=aux;          // latest scan output, not the first
     f.lastScan=lastScan;
     if(status!=="pass"){
       f.kind = status==="warn" ? "Warning" : "Failure";
@@ -711,6 +742,7 @@ function enrich(){
     const notScanned = anyRun && f.state==="open" && !seen.has(lc(f.host));
     out.push(Object.assign({ key:k, age, over, slaStatus, bucket:bucketOf(age), notScanned,
       owner:invAttr(f.host,"owner"), app:invAttr(f.host,"app"), env:invAttr(f.host,"env"),
+      platform:invAttr(f.host,"platform"), zone:invAttr(f.host,"zone"), mwType:invAttr(f.host,"mwType"),
       inInventory: !!(st.inventory && st.inventory.hosts[lc(f.host)]) }, f, { kind: f.kind||"Failure" }));
   }
   return out;
@@ -800,15 +832,18 @@ function filteredFindings(){
   if(ft.run!=="all") rows=rows.filter(f=>String(f.openedInRun)===ft.run);
   if(ft.text){
     const q=ft.text.toLowerCase();
-    rows=rows.filter(f=>(f.host+" "+f.ruleId+" "+(f.ruleName||"")+" "+(f.owner||"")+" "+(f.app||"")).toLowerCase().includes(q));
+    rows=rows.filter(f=>[f.host,f.instance,f.ruleId,f.ruleName,f.owner,f.app,f.env,f.mwType,f.zone,f.platform]
+      .map(v=>v||"").join(" ").toLowerCase().includes(q));
   }
   return sortRows(rows);
 }
 
 function renderFindings(body){
   const rows=filteredFindings(), ft=S.filter, hasInv=!!(S.state.inventory);
-  const cols=[["host","Host"],["ruleId","Rule ID"],["ruleName","Rule name"],["kind","Result"],["severity","Severity"]]
-    .concat(hasInv?[["owner","Owner"],["app","Application"],["env","Env"]]:[])
+  const dims=tableDims(), hasInst=anyInstance();
+  const cols=[["host","Host"]].concat(hasInst?[["instance","Instance"]]:[])
+    .concat([["ruleId","Rule ID"],["ruleName","Rule name"],["kind","Result"],["severity","Severity"]])
+    .concat(dims.map(d=>[d[0],d[2]]))
     .concat([["firstFound","First found"],["age","Age"],["slaStatus","SLA"],
              ["lastSeenFail","Last failing"],["occurrences","Seen"],["remediatedOn","Closed"]]);
   const runOpts='<option value="all">Any run</option>'+S.state.runs.map(r=>'<option value="'+r.id+'">Opened in run '+r.id+' · '+esc(r.scanDate)+'</option>').join("");
@@ -834,11 +869,12 @@ function renderFindings(body){
         '<td class="chk"><input type="checkbox" data-k="'+esc(f.key)+'"'+(S.selected.has(f.key)?" checked":"")+'></td>'+
         '<td>'+esc(f.host)+(f.notScanned?' <span class="pill p-due">not scanned</span>':'')+
           (hasInv&&!f.inInventory?' <span class="pill p-breach">not inventoried</span>':'')+'</td>'+
+        (hasInst?'<td>'+esc(f.instance||"")+'</td>':'')+
         '<td>'+esc(f.ruleId)+'</td>'+
         '<td class="name">'+esc(f.ruleName||"")+'</td>'+
         '<td>'+(f.kind==="Warning"?'<span class="pill p-due">Warning</span>':'<span class="pill p-breach">Failure</span>')+'</td>'+
         '<td>'+esc(f.severity||"")+'</td>'+
-        (hasInv?'<td>'+esc(f.owner||"")+'</td><td>'+esc(f.app||"")+'</td><td>'+esc(f.env||"")+'</td>':'')+
+        dims.map(d=>'<td>'+esc(f[d[0]]||"")+'</td>').join("")+
         '<td>'+esc(f.firstFound)+(f.baseline?' <span class="pill p-base">baseline</span>':'')+'</td>'+
         '<td>'+f.age+'</td><td>'+pill(f.slaStatus)+'</td>'+
         '<td>'+esc(f.lastSeenFail||"")+'</td><td>'+(f.occurrences||1)+'</td><td>'+esc(f.remediatedOn||"")+'</td>'+
@@ -889,9 +925,10 @@ function renderCoverage(body){
     ["In inventory, never scanned in any run", cov.neverScanned.length, cov.neverScanned.length?"no compliance evidence exists for these":""],
     ["Scanned but not in the inventory", cov.notInventoried.length, cov.notInventoried.length?"unrecorded assets":""]
   ];
+  const dims=tableDims().slice(0,2);
   const list=(title,arr)=> arr.length ?
     '<h3>'+esc(title)+' ('+arr.length+')</h3><div class="scroller" style="max-height:220px"><table><tbody>'+
-    arr.sort().map(h=>'<tr><td>'+esc(h)+'</td><td>'+esc(invAttr(h,"owner"))+'</td><td>'+esc(invAttr(h,"app"))+'</td></tr>').join("")+
+    arr.sort().map(h=>'<tr><td>'+esc(h)+'</td>'+dims.map(d=>'<td>'+esc(invAttr(h,d[0]))+'</td>').join("")+'</tr>').join("")+
     '</tbody></table></div>' : "";
   body.innerHTML='<div class="panelbody">'+
     '<table style="max-width:680px"><tbody>'+
@@ -923,27 +960,27 @@ function renderGroups(body){
         (r.breach?'<span class="pill p-breach">'+r.breach+'</span>':'0')+'</td><td>'+r.oldest+'</td></tr>').join("")+
       '</tbody></table></div>';
   };
-  const html=build("owner","Owner or support group")+build("app","Application or service")+build("env","Environment");
-  body.innerHTML='<div class="panelbody">'+(html||'<p>The inventory has no owner, application or environment column mapped.</p>')+'</div>';
+  const html=mappedDims().map(d=>build(d[0],d[1])).join("");
+  body.innerHTML='<div class="panelbody">'+(html||'<p>The inventory has no owner, application, environment, middleware type, zone or platform column mapped.</p>')+'</div>';
 }
 
 function renderHosts(body){
   const open=enrich().filter(f=>f.state==="open"), by={};
   for(const f of open){
-    const h=by[f.host]||(by[f.host]={ host:f.host, owner:f.owner, app:f.app, open:0, breach:0, oldest:0,
+    const h=by[f.host]||(by[f.host]={ host:f.host, owner:f.owner, app:f.app, env:f.env, open:0, breach:0, oldest:0,
       notScanned:f.notScanned, inInventory:f.inInventory });
     h.open++; if(f.slaStatus==="Breached") h.breach++;
     h.oldest=Math.max(h.oldest,f.age);
   }
   const rows=Object.values(by).sort((a,b)=>b.breach-a.breach||b.open-a.open);
-  const hasInv=!!S.state.inventory;
+  const hasInv=!!S.state.inventory, dims=tableDims().slice(0,2);
   body.innerHTML = rows.length ?
     '<div class="bar"><span class="note" style="margin:0">Use Remove all findings for a host when a device has been decommissioned or loaded in error.</span></div>'+
     '<div class="scroller"><table><thead><tr><th class="nosort">Host</th>'+
-    (hasInv?'<th class="nosort">Owner</th><th class="nosort">Application</th>':'')+
+    dims.map(d=>'<th class="nosort">'+esc(d[2])+'</th>').join("")+
     '<th class="nosort">Open</th><th class="nosort">Past SLA</th><th class="nosort">Oldest, days</th><th class="nosort">Scanned</th><th class="nosort"></th></tr></thead><tbody>'+
     rows.map(h=>'<tr><td>'+esc(h.host)+(hasInv&&!h.inInventory?' <span class="pill p-breach">not inventoried</span>':'')+'</td>'+
-      (hasInv?'<td>'+esc(h.owner||"")+'</td><td>'+esc(h.app||"")+'</td>':'')+
+      dims.map(d=>'<td>'+esc(h[d[0]]||"")+'</td>').join("")+
       '<td>'+h.open+'</td><td>'+(h.breach?'<span class="pill p-breach">'+h.breach+'</span>':'0')+'</td>'+
       '<td>'+h.oldest+'</td><td>'+(h.notScanned?'<span class="pill p-due">no</span>':'yes')+'</td>'+
       '<td><button class="danger" data-host="'+esc(h.host)+'" style="padding:3px 9px;font-size:12.5px">Remove</button></td></tr>').join("")+
@@ -1099,36 +1136,484 @@ function csv(rows){
   const q=v=>{ const s=String(v==null?"":v); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
   return "\uFEFF"+rows.map(r=>r.map(q).join(",")).join("\r\n");
 }
-function findingsSheet(){
-  const hasInv=!!S.state.inventory;
-  const head=["Host"].concat(hasInv?["Owner","Application","Environment","In Inventory"]:[])
-    .concat(["Rule ID","Rule Name","Result Type","Severity","Status","First Found","Baseline Dated","Last Seen Failing",
-      "Last Scan","Age Days","SLA Days","SLA Status","Days Over SLA","Age Bucket","Times Seen",
-      "Remediated On","Host Not Scanned","Opened In Run"]);
-  const rows=enrich().sort((a,b)=>b.age-a.age);
-  return csv([head].concat(rows.map(f=>[f.host]
-    .concat(hasInv?[f.owner||"",f.app||"",f.env||"",f.inInventory?"Yes":"No"]:[])
-    .concat([f.ruleId,f.ruleName||"",f.kind,f.severity||"", f.state==="open"?"Open":"Remediated",
-      f.firstFound, f.baseline?"Yes":"No", f.lastSeenFail||"", f.lastScan||"", f.age, S.state.slaDays,
-      f.slaStatus, f.over>0?f.over:0, f.bucket, f.occurrences||1, f.remediatedOn||"",
-      f.notScanned?"Yes":"No", f.openedInRun||""]))));
+/* ============================ export rows ============================ */
+// One column set shared by the CSV and the workbook, so the two never drift.
+// Cells are plain values, or { d:"YYYY-MM-DD" }, { dt:"ISO datetime" }, { v, s:style }.
+const yn=b=>b?"Yes":"No";
+const clip=s=>{ s=String(s==null?"":s); return s.length>32000 ? s.slice(0,32000)+"…" : s; };
+function flatRows({ head, rows }){
+  const flat=c=> c==null ? "" : typeof c==="object" ? ("d" in c ? (c.d||"") : "dt" in c ? (c.dt||"") : (c.v==null?"":c.v)) : c;
+  return [head].concat(rows.map(r=>r.map(flat)));
 }
-function coverageSheet(){
-  const cov=coverage();
-  const head=["Host","Owner","Application","Environment","In Inventory","Scanned In Latest Run","Ever Scanned","Open Findings"];
-  const openBy={};
-  enrich().filter(f=>f.state==="open").forEach(f=>{ openBy[lc(f.host)]=(openBy[lc(f.host)]||0)+1; });
-  const seenNow=lastRunHosts(); const ever=new Set();
-  S.state.runs.forEach(r=>(r.hostList||[]).forEach(h=>ever.add(h)));
-  const all=new Map();
-  if(S.state.inventory) Object.values(S.state.inventory.hosts).forEach(r=>all.set(lc(r.host),r.host));
-  [...ever].forEach(h=>{ if(!all.has(h)) all.set(h,h); });
-  const rows=[...all.entries()].sort((a,b)=>a[0]<b[0]?-1:1).map(([k,h])=>[
-    h, invAttr(h,"owner"), invAttr(h,"app"), invAttr(h,"env"),
-    (S.state.inventory && S.state.inventory.hosts[k])?"Yes":"No",
-    seenNow.has(k)?"Yes":"No", ever.has(k)?"Yes":"No", openBy[k]||0
+function findingRows(){
+  const st=S.state, sla=st.slaDays, hasInv=!!st.inventory;
+  const head=["Host","Instance","Rule ID","Rule Name","Result Type","Severity","Test Scope","Additional Data",
+    "Status","First Found","Baseline Dated","Last Seen Failing","Last Scan","Age Days","SLA Days","SLA Status",
+    "Days Over SLA","Age Bucket","Times Seen","Remediated On","Host Not Scanned","Opened In Run",
+    "Owner","Application","Environment","Platform","Network Zone","Middleware Type","In Inventory"];
+  const slaStyle=s=> (s==="Breached"||s==="Closed late") ? ST.breach : s==="Due soon" ? ST.due : ST.ok;
+  const rows=enrich().sort((a,b)=>b.age-a.age).map(f=>[
+    f.host, f.instance||"", f.ruleId, f.ruleName||"", f.kind, f.severity||"", f.scope||"", clip(f.aux),
+    f.state==="open"?"Open":"Remediated", { d:f.firstFound }, yn(f.baseline), { d:f.lastSeenFail }, { d:f.lastScan },
+    f.age, sla, { v:f.slaStatus, s:slaStyle(f.slaStatus) }, f.over>0?f.over:0, f.bucket, f.occurrences||1,
+    { d:f.remediatedOn }, yn(f.notScanned), f.openedInRun||"",
+    f.owner||"", f.app||"", f.env||"", f.platform||"", f.zone||"", f.mwType||"", hasInv?yn(f.inInventory):""
   ]);
-  return csv([head].concat(rows));
+  return { head, rows };
+}
+function coverageRows(){
+  const st=S.state, inv=st.inventory;
+  const head=["Host","Owner","Application","Environment","Platform","Network Zone","Middleware Type",
+    "In Inventory","Scanned In Latest Run","Ever Scanned","Coverage","Open Findings","Past SLA"];
+  const openBy={}, breachBy={}, disp={};
+  Object.values(st.findings).forEach(f=>{ disp[lc(f.host)]=f.host; });
+  enrich().filter(f=>f.state==="open").forEach(f=>{ const k=lc(f.host);
+    openBy[k]=(openBy[k]||0)+1; if(f.slaStatus==="Breached") breachBy[k]=(breachBy[k]||0)+1; });
+  const seenNow=lastRunHosts(), ever=new Set();
+  st.runs.forEach(r=>(r.hostList||[]).forEach(h=>ever.add(h)));
+  const all=new Map();
+  if(inv) Object.values(inv.hosts).forEach(r=>all.set(lc(r.host),r.host));
+  [...ever].forEach(h=>{ if(!all.has(h)) all.set(h,disp[h]||h); });
+  const rows=[...all.entries()].sort((a,b)=>a[0]<b[0]?-1:1).map(([k,h])=>{
+    const inInv=!!(inv&&inv.hosts[k]), now=seenNow.has(k), everS=ever.has(k);
+    const c = !inInv ? "Not inventoried" : now ? "Scanned" : everS ? "Missing from latest run" : "Never scanned";
+    return [h, invAttr(h,"owner"), invAttr(h,"app"), invAttr(h,"env"), invAttr(h,"platform"), invAttr(h,"zone"), invAttr(h,"mwType"),
+      inv?yn(inInv):"", yn(now), yn(everS), { v:c, s: c==="Scanned"?ST.ok : c==="Not inventoried"?ST.due : ST.breach },
+      openBy[k]||0, breachBy[k]||0];
+  });
+  return { head, rows };
+}
+function runRows(){
+  const head=["Run","Ran At (UTC)","Scan Date","Run By","Source File","Inventory","Rows","Hosts","New","Still Failing",
+    "Remediated","Reopened","Warnings","Warnings Excluded","Warning Handling","Unreadable","Numeric Results","SLA Days"];
+  const rows=S.state.runs.map(r=>[r.id, { dt:r.ranAt }, { d:r.scanDate }, r.operator, r.source, r.inventorySource||"", r.rows, r.hosts,
+    r.newFindings, r.stillFailing, r.remediated, r.reopened, r.warnings||0, r.warningsIgnored||0,
+    r.warnMode==="ignore"?"Excluded":"Tracked as findings", r.unreadable||0, yn(!!r.codedResults), r.slaDays]);
+  return { head, rows };
+}
+function changeRows(){
+  const head=["When (UTC)","By","Action","Detail","Count","Reason"];
+  return { head, rows:S.state.changes.map(c=>[{ dt:c.at }, c.operator, c.kind, c.detail, c.count, c.reason]) };
+}
+
+/* ============================ xlsx writer ============================ */
+// Hand-rolled like the reader: OOXML parts zipped in the page, no library, no
+// network. Entries are deflated with CompressionStream where the browser has it
+// and stored uncompressed otherwise; Excel reads both.
+const ST={ bold:1, head:2, date:3, datetime:4, title:5, muted:6, figure:7, pct:8, section:9, breach:10, due:11, ok:12, wrap:13 };
+const XML_HEAD='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+const NS_MAIN="http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const NS_R="http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const NS_REL="http://schemas.openxmlformats.org/package/2006/relationships";
+const RT="http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+const CT_SS="application/vnd.openxmlformats-officedocument.spreadsheetml.";
+const xe=s=>esc(s).replace(/[ --]/g,"");
+function colLetter(n){ let s=""; n++; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26); } return s; }
+function isoToSerial(iso){ return Math.round(Date.UTC(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10))/86400000)+25569; }
+function dtToSerial(iso){ const t=Date.parse(iso); return isNaN(t)?null:t/86400000+25569; }
+
+const CRC_TABLE=(()=>{ const t=new Int32Array(256);
+  for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c; } return t; })();
+function crc32(b){ let c=-1; for(let i=0;i<b.length;i++) c=CRC_TABLE[(c^b[i])&255]^(c>>>8); return (c^-1)>>>0; }
+async function deflateRaw(bytes){
+  if(typeof CompressionStream==="undefined") return null;
+  try{ const s=new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(s).arrayBuffer()); }catch(e){ return null; }
+}
+async function zipParts(parts){
+  const enc=new TextEncoder(), out=[], cd=[];
+  const d=new Date(), dosTime=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1),
+    dosDate=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
+  const u16=v=>[v&255,(v>>>8)&255], u32=v=>[v&255,(v>>>8)&255,(v>>>16)&255,(v>>>24)&255];
+  let offset=0;
+  for(const p of parts){
+    const name=enc.encode(p.name), data=enc.encode(p.xml), crc=crc32(data);
+    const comp=await deflateRaw(data), body=comp||data, method=comp?8:0;
+    const common=[...u16(20),...u16(0x0800),...u16(method),...u16(dosTime),...u16(dosDate),
+      ...u32(crc),...u32(body.length),...u32(data.length),...u16(name.length)];
+    const local=new Uint8Array([...u32(0x04034b50),...common,...u16(0)]);
+    out.push(local,name,body);
+    cd.push(new Uint8Array([...u32(0x02014b50),...u16(20),...common,...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(offset)]),name);
+    offset+=local.length+name.length+body.length;
+  }
+  const cdSize=cd.reduce((s,b)=>s+b.length,0);
+  const eocd=new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(parts.length),...u16(parts.length),...u32(cdSize),...u32(offset),...u16(0)]);
+  return new Blob([...out,...cd,eocd],{ type:CT_SS+"sheet" });
+}
+
+function sstMake(){
+  const m=new Map();
+  return {
+    idx(s){ let i=m.get(s); if(i===undefined){ i=m.size; m.set(s,i); } return i; },
+    xml(){ let x=XML_HEAD+'<sst xmlns="'+NS_MAIN+'" count="'+m.size+'" uniqueCount="'+m.size+'">';
+      for(const s of m.keys()) x+='<si><t xml:space="preserve">'+xe(s)+'</t></si>'; return x+'</sst>'; }
+  };
+}
+function cellXml(ref,spec,sst){
+  if(spec==null||spec==="") return "";
+  let v=spec, s=0;
+  if(typeof spec==="object"){
+    if("d" in spec){ if(!spec.d) return ""; v=isoToSerial(spec.d); s=spec.s||ST.date; }
+    else if("dt" in spec){ v=spec.dt?dtToSerial(spec.dt):null; if(v==null) return ""; s=spec.s||ST.datetime; }
+    else{ v=spec.v; s=spec.s||0; if(v==null||v==="") return s?'<c r="'+ref+'" s="'+s+'"/>':""; }
+  }
+  const sa=s?' s="'+s+'"':'';
+  if(typeof v==="number") return isFinite(v)?'<c r="'+ref+'"'+sa+'><v>'+v+'</v></c>':"";
+  if(typeof v==="boolean") v=v?"Yes":"No";
+  return '<c r="'+ref+'"'+sa+' t="s"><v>'+sst.idx(String(v))+'</v></c>';
+}
+const relsXml=rels=>XML_HEAD+'<Relationships xmlns="'+NS_REL+'">'+
+  rels.map(r=>'<Relationship Id="'+r.id+'" Type="'+r.type+'" Target="'+r.target+'"/>').join("")+'</Relationships>';
+
+function sheetXml(sh,sst,rel){
+  let maxC=0; sh.rows.forEach(r=>{ if(r&&r.length>maxC) maxC=r.length; });
+  const lastRow=Math.max(1,sh.rows.length), lastCol=Math.max(1,maxC);
+  let x=XML_HEAD+'<worksheet xmlns="'+NS_MAIN+'" xmlns:r="'+NS_R+'"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>';
+  x+='<dimension ref="A1:'+colLetter(lastCol-1)+lastRow+'"/>';
+  x+='<sheetViews><sheetView workbookViewId="0"'+(sh.tab?' tabSelected="1"':'')+(sh.gridlines===false?' showGridLines="0"':'')+'>';
+  if(sh.freeze) x+='<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/>';
+  x+='</sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>';
+  if(sh.widths&&sh.widths.length)
+    x+='<cols>'+sh.widths.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join("")+'</cols>';
+  x+='<sheetData>';
+  sh.rows.forEach((r,i)=>{
+    if(!r||!r.length) return;
+    let cells=""; r.forEach((c,j)=>{ cells+=cellXml(colLetter(j)+(i+1),c,sst); });
+    if(cells) x+='<row r="'+(i+1)+'">'+cells+'</row>';
+  });
+  x+='</sheetData><pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>';
+  if(rel.drawing) x+='<drawing r:id="'+rel.drawing+'"/>';
+  if(rel.table) x+='<tableParts count="1"><tablePart r:id="'+rel.table+'"/></tableParts>';
+  return x+'</worksheet>';
+}
+function tableXml(id,name,head,nrows){
+  const ref='A1:'+colLetter(head.length-1)+(Math.max(nrows,1)+1);
+  return XML_HEAD+'<table xmlns="'+NS_MAIN+'" id="'+id+'" name="'+xe(name)+'" displayName="'+xe(name)+'" ref="'+ref+'" totalsRowShown="0">'+
+    '<autoFilter ref="'+ref+'"/><tableColumns count="'+head.length+'">'+
+    head.map((h,i)=>'<tableColumn id="'+(i+1)+'" name="'+xe(h)+'"/>').join("")+
+    '</tableColumns><tableStyleInfo name="TableStyleLight1" showFirstColumn="0" showLastColumn="0" showRowStripes="0" showColumnStripes="0"/></table>';
+}
+function stylesXml(){
+  const font=(extra)=>'<font>'+extra+'<name val="Calibri"/><family val="2"/></font>';
+  return XML_HEAD+'<styleSheet xmlns="'+NS_MAIN+'">'+
+    '<numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd"/><numFmt numFmtId="165" formatCode="yyyy\\-mm\\-dd\\ hh:mm"/></numFmts>'+
+    '<fonts count="8">'+
+      font('<sz val="10"/>')+                                              // 0 normal
+      font('<b/><sz val="10"/>')+                                          // 1 bold
+      font('<b/><sz val="10"/><color rgb="FFFFFFFF"/>')+                   // 2 header
+      font('<b/><sz val="16"/><color rgb="FF14181F"/>')+                   // 3 title
+      font('<sz val="10"/><color rgb="FF5B6472"/>')+                       // 4 muted
+      font('<b/><sz val="20"/><color rgb="FF14181F"/>')+                   // 5 figure
+      font('<b/><sz val="12"/><color rgb="FF0F6E68"/>')+                   // 6 section
+      font('<b/><sz val="10"/><color rgb="FFA4262C"/>')+                   // 7 breach text
+    '</fonts>'+
+    '<fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'+
+      '<fill><patternFill patternType="solid"><fgColor rgb="FF0F6E68"/><bgColor indexed="64"/></patternFill></fill>'+   // 2 teal
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFFBE9EA"/><bgColor indexed="64"/></patternFill></fill>'+   // 3 red tint
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF3D6"/><bgColor indexed="64"/></patternFill></fill>'+   // 4 amber tint
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFE3F3EC"/><bgColor indexed="64"/></patternFill></fill>'+   // 5 green tint
+    '</fills>'+
+    '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'+
+      '<border><left/><right/><top/><bottom style="thin"><color rgb="FFB9BEB4"/></bottom><diagonal/></border></borders>'+
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
+    '<cellXfs count="14">'+
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'+                                            // 0
+      '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                              // 1 bold
+      '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'+                // 2 head
+      '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'+                    // 3 date
+      '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'+                    // 4 datetime
+      '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                              // 5 title
+      '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                              // 6 muted
+      '<xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1"/>'+                              // 7 figure
+      '<xf numFmtId="9" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyNumberFormat="1"/>'+        // 8 percent
+      '<xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'+              // 9 section
+      '<xf numFmtId="0" fontId="7" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'+                // 10 breach
+      '<xf numFmtId="0" fontId="1" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'+                // 11 due
+      '<xf numFmtId="0" fontId="1" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'+                // 12 ok
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>'+ // 13 wrap
+    '</cellXfs>'+
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'+
+    '</styleSheet>';
+}
+// Native Excel bar/column chart. spec: { title, dir:"bar"|"col", cats, catRef,
+// series:[{ name, nameRef, vals, ref, color }], pointColors?, anchor:{col0,row0,col1,row1} }
+function chartXml(sp){
+  const strCache=arr=>'<c:ptCount val="'+arr.length+'"/>'+arr.map((v,i)=>'<c:pt idx="'+i+'"><c:v>'+xe(v)+'</c:v></c:pt>').join("");
+  const numCache=arr=>'<c:formatCode>General</c:formatCode><c:ptCount val="'+arr.length+'"/>'+
+    arr.map((v,i)=>'<c:pt idx="'+i+'"><c:v>'+(+v||0)+'</c:v></c:pt>').join("");
+  const fill=c=>'<c:spPr><a:solidFill><a:srgbClr val="'+c+'"/></a:solidFill></c:spPr>';
+  const maxVal=sp.series.reduce((m,s)=>s.vals.reduce((a,b)=>Math.max(a,+b||0),m),0);
+  const ser=sp.series.map((s,i)=>'<c:ser><c:idx val="'+i+'"/><c:order val="'+i+'"/>'+
+    '<c:tx><c:strRef><c:f>'+xe(s.nameRef)+'</c:f><c:strCache>'+strCache([s.name])+'</c:strCache></c:strRef></c:tx>'+
+    fill(s.color)+'<c:invertIfNegative val="0"/>'+
+    (sp.pointColors&&sp.series.length===1 ? sp.pointColors.map((c,j)=>'<c:dPt><c:idx val="'+j+'"/><c:invertIfNegative val="0"/><c:bubble3D val="0"/>'+fill(c)+'</c:dPt>').join("") : "")+
+    '<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>'+
+    '<c:cat><c:strRef><c:f>'+xe(sp.catRef)+'</c:f><c:strCache>'+strCache(sp.cats)+'</c:strCache></c:strRef></c:cat>'+
+    '<c:val><c:numRef><c:f>'+xe(s.ref)+'</c:f><c:numCache>'+numCache(s.vals)+'</c:numCache></c:numRef></c:val>'+
+    '</c:ser>').join("");
+  const horiz=sp.dir==="bar";
+  return XML_HEAD+'<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="'+NS_R+'">'+
+    '<c:roundedCorners val="0"/><c:chart>'+
+    '<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1100" b="1"/></a:pPr><a:r><a:rPr lang="en-US" sz="1100" b="1"/><a:t>'+xe(sp.title)+'</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>'+
+    '<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>'+
+    '<c:barChart><c:barDir val="'+(horiz?"bar":"col")+'"/><c:grouping val="clustered"/><c:varyColors val="0"/>'+ser+
+    '<c:gapWidth val="'+(sp.series.length>1?"60":"40")+'"/><c:axId val="10"/><c:axId val="20"/></c:barChart>'+
+    '<c:catAx><c:axId val="10"/><c:scaling><c:orientation val="'+(horiz?"maxMin":"minMax")+'"/></c:scaling><c:delete val="0"/><c:axPos val="'+(horiz?"l":"b")+'"/>'+
+    '<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>'+
+    '<c:crossAx val="20"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>'+
+    '<c:valAx><c:axId val="20"/><c:scaling><c:orientation val="minMax"/><c:min val="0"/></c:scaling><c:delete val="0"/><c:axPos val="'+(horiz?"b":"l")+'"/><c:majorGridlines/>'+
+    '<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>'+
+    '<c:crossAx val="10"/><c:crosses val="'+(horiz?"max":"autoZero")+'"/><c:crossBetween val="between"/>'+(maxVal<10?'<c:majorUnit val="1"/>':'')+'</c:valAx>'+
+    '</c:plotArea>'+
+    (sp.series.length>1?'<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>':'')+
+    '<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>'+
+    '<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900"/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>'+
+    '</c:chartSpace>';
+}
+function drawingXml(anchors){
+  return XML_HEAD+'<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'+
+    anchors.map((a,i)=>'<xdr:twoCellAnchor editAs="oneCell">'+
+      '<xdr:from><xdr:col>'+a.col0+'</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>'+a.row0+'</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'+
+      '<xdr:to><xdr:col>'+a.col1+'</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>'+a.row1+'</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>'+
+      '<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="'+(i+2)+'" name="Chart '+(i+1)+'"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>'+
+      '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'+
+      '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="'+NS_R+'" r:id="'+a.rId+'"/></a:graphicData></a:graphic></xdr:graphicFrame>'+
+      '<xdr:clientData/></xdr:twoCellAnchor>').join("")+
+    '</xdr:wsDr>';
+}
+// sheets: [{ name, rows, head?, table?, freeze?, widths?, gridlines?, charts?, tab? }]
+async function xlsxBlob(sheets,meta){
+  const sst=sstMake(), parts=[], types=[], wbRels=[], sheetEls=[];
+  let tableN=0, chartN=0, drawingN=0;
+  sheets.forEach((sh,i)=>{
+    const n=i+1, rels=[], rel={};
+    if(sh.table){
+      tableN++; rel.table="rId"+(rels.length+1);
+      rels.push({ id:rel.table, type:RT+"table", target:"../tables/table"+tableN+".xml" });
+      parts.push({ name:"xl/tables/table"+tableN+".xml", xml:tableXml(tableN,sh.table,sh.head,sh.rows.length-1) });
+      types.push('<Override PartName="/xl/tables/table'+tableN+'.xml" ContentType="'+CT_SS+'table+xml"/>');
+    }
+    if(sh.charts&&sh.charts.length){
+      drawingN++; const dRels=[];
+      const anchors=sh.charts.map((c,j)=>{
+        chartN++; dRels.push({ id:"rId"+(j+1), type:RT+"chart", target:"../charts/chart"+chartN+".xml" });
+        parts.push({ name:"xl/charts/chart"+chartN+".xml", xml:chartXml(c) });
+        types.push('<Override PartName="/xl/charts/chart'+chartN+'.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>');
+        return Object.assign({ rId:"rId"+(j+1) }, c.anchor);
+      });
+      parts.push({ name:"xl/drawings/drawing"+drawingN+".xml", xml:drawingXml(anchors) });
+      parts.push({ name:"xl/drawings/_rels/drawing"+drawingN+".xml.rels", xml:relsXml(dRels) });
+      types.push('<Override PartName="/xl/drawings/drawing'+drawingN+'.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>');
+      rel.drawing="rId"+(rels.length+1);
+      rels.push({ id:rel.drawing, type:RT+"drawing", target:"../drawings/drawing"+drawingN+".xml" });
+    }
+    parts.push({ name:"xl/worksheets/sheet"+n+".xml", xml:sheetXml(sh,sst,rel) });
+    if(rels.length) parts.push({ name:"xl/worksheets/_rels/sheet"+n+".xml.rels", xml:relsXml(rels) });
+    types.push('<Override PartName="/xl/worksheets/sheet'+n+'.xml" ContentType="'+CT_SS+'worksheet+xml"/>');
+    wbRels.push({ id:"rId"+n, type:RT+"worksheet", target:"worksheets/sheet"+n+".xml" });
+    sheetEls.push('<sheet name="'+xe(sh.name)+'" sheetId="'+n+'" r:id="rId'+n+'"/>');
+  });
+  wbRels.push({ id:"rId"+(sheets.length+1), type:RT+"styles", target:"styles.xml" });
+  wbRels.push({ id:"rId"+(sheets.length+2), type:RT+"sharedStrings", target:"sharedStrings.xml" });
+  const now=new Date().toISOString().replace(/\.\d+Z$/,"Z");
+  parts.push({ name:"xl/workbook.xml", xml:XML_HEAD+'<workbook xmlns="'+NS_MAIN+'" xmlns:r="'+NS_R+'"><workbookPr/>'+
+    '<bookViews><workbookView xWindow="0" yWindow="0" windowWidth="24000" windowHeight="14000"/></bookViews><sheets>'+sheetEls.join("")+'</sheets></workbook>' });
+  parts.push({ name:"xl/_rels/workbook.xml.rels", xml:relsXml(wbRels) });
+  parts.push({ name:"xl/styles.xml", xml:stylesXml() });
+  parts.push({ name:"xl/sharedStrings.xml", xml:sst.xml() });
+  parts.push({ name:"docProps/core.xml", xml:XML_HEAD+'<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'+
+    '<dc:title>'+xe(meta.title)+'</dc:title><dc:creator>'+xe(meta.creator)+'</dc:creator>'+
+    '<dcterms:created xsi:type="dcterms:W3CDTF">'+now+'</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">'+now+'</dcterms:modified></cp:coreProperties>' });
+  parts.push({ name:"docProps/app.xml", xml:XML_HEAD+'<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Middleware Compliance Tracker</Application></Properties>' });
+  parts.push({ name:"_rels/.rels", xml:relsXml([
+    { id:"rId1", type:RT+"officeDocument", target:"xl/workbook.xml" },
+    { id:"rId2", type:"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", target:"docProps/core.xml" },
+    { id:"rId3", type:RT+"extended-properties", target:"docProps/app.xml" }]) });
+  parts.unshift({ name:"[Content_Types].xml", xml:XML_HEAD+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+
+    '<Override PartName="/xl/workbook.xml" ContentType="'+CT_SS+'sheet.main+xml"/>'+
+    '<Override PartName="/xl/styles.xml" ContentType="'+CT_SS+'styles+xml"/>'+
+    '<Override PartName="/xl/sharedStrings.xml" ContentType="'+CT_SS+'sharedStrings+xml"/>'+
+    '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'+
+    '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'+
+    types.join("")+'</Types>' });
+  return zipParts(parts);
+}
+
+/* ============================ workbook ============================ */
+function autoWidths(head,rows){
+  return head.map((h,i)=>{
+    let w=String(h).length;
+    for(const r of rows.slice(0,500)){
+      const c=r[i];
+      const s= c==null ? "" : typeof c==="object" ? ("d" in c ? "yyyy-mm-dd" : "dt" in c ? "yyyy-mm-dd hh:mm" : String(c.v==null?"":c.v)) : String(c);
+      if(s.length>w) w=s.length;
+    }
+    return Math.min(60,Math.max(8,w+2));
+  });
+}
+function dataSheet(name,tableName,{ head, rows }){
+  return { name, head, table:tableName, freeze:true, widths:autoWidths(head,rows),
+    rows:[head.map(h=>({ v:h, s:ST.head }))].concat(rows.length?rows:[[]]) };
+}
+function dashboardSheet(){
+  const st=S.state, run=st.runs[st.runs.length-1];
+  const all=enrich(), open=all.filter(f=>f.state==="open"), cov=coverage(), hasInv=!!st.inventory;
+  const C={ teal:"0F6E68", red:"A4262C", amber:"B7791F", green:"14634A", grey:"8A9099" };
+  const rows=[], charts=[];
+  let r=0;
+  const put=cells=>{ rows[r++]=cells; };
+  const blank=()=>{ r++; };
+  const ref=(col,r0,r1)=>"Dashboard!$"+colLetter(col)+"$"+r0+":$"+colLetter(col)+"$"+r1;
+  const hdr=(col,sec)=>"Dashboard!$"+colLetter(col)+"$"+(sec.r0-1);
+  const breachCell=n=> n>0 ? { v:n, s:ST.breach } : n;
+  // heading row, header row, data rows, blank row. r0/r1 are 1-based data rows, top is the 0-based heading row.
+  const section=(title,head,data)=>{
+    const top=r;
+    put([{ v:title, s:ST.section }]);
+    put(head.map(h=>({ v:h, s:ST.head })));
+    const r0=r+1; data.forEach(d=>put(d)); const r1=r;
+    blank();
+    return { top, r0, r1 };
+  };
+  // chart to the right of a section, sized to its categories; the next section starts below both
+  const chart=(sec,spec)=>{
+    if(!spec.cats.length) return;
+    const h=Math.max(16, 5+Math.ceil(spec.cats.length*(spec.dir==="bar"?1.3:1)));
+    spec.anchor={ col0:7, row0:sec.top, col1:17, row1:sec.top+h };
+    charts.push(spec);
+    while(r<sec.top+h+1) r++;
+  };
+
+  put([{ v:"Middleware compliance — scan of "+run.scanDate, s:ST.title }]);
+  put([{ v:"Run "+run.id+" of "+st.runs.length+" · prepared "+todayISO()+" by "+run.operator, s:ST.muted }]);
+  blank();
+  [["Source export",run.source],
+   ["Inventory",run.inventorySource||"not used"],
+   ["Rows read",run.rows+" across "+run.hosts+" hosts"+(run.unreadable?", "+run.unreadable+" ignored as unreadable":"")],
+   ["Remediation SLA",run.slaDays+" days from first found"],
+   ["Tracking started",st.trackingStart],
+   ["Warnings",run.warnMode==="ignore" ? "excluded from this run"+(run.warningsIgnored?" ("+run.warningsIgnored+" rows)":"") : "tracked as findings and aged like failures"]
+  ].forEach(m=>put([{ v:m[0], s:ST.muted }, m[1]]));
+  blank();
+
+  const nBreach=open.filter(f=>f.slaStatus==="Breached").length, nDue=open.filter(f=>f.slaStatus==="Due soon").length, nIn=open.length-nBreach-nDue;
+  const sec1=section("Headline",["Measure","Value"],[
+    ["Open findings",open.length],
+    ["Past SLA",{ v:nBreach, s:ST.breach }],
+    ["Due within 7 days",{ v:nDue, s:ST.due }],
+    ["In SLA",{ v:nIn, s:ST.ok }],
+    ["Open failures",open.filter(f=>f.kind==="Failure").length],
+    ["Open warnings",open.filter(f=>f.kind==="Warning").length],
+    ["Mean age of open findings, days",open.length?Math.round(open.reduce((s,f)=>s+f.age,0)/open.length):0],
+    ["Oldest open finding, days",open.reduce((m,f)=>Math.max(m,f.age),0)],
+    ["Baseline dated",open.filter(f=>f.baseline).length],
+    ["On hosts not scanned in this run",open.filter(f=>f.notScanned).length],
+    ["New this run",open.filter(f=>f.openedInRun===run.id).length],
+    ["Remediated this run",all.filter(f=>f.remediatedOn===run.scanDate).length],
+    ["Remediated, all time",all.filter(f=>f.state!=="open").length]
+  ]);
+  chart(sec1,{ title:"Open findings by SLA status", dir:"col", cats:["Past SLA","Due within 7 days","In SLA"],
+    catRef:ref(0,sec1.r0+1,sec1.r0+3), pointColors:[C.red,C.amber,C.green],
+    series:[{ name:"Open findings", nameRef:hdr(1,sec1), vals:[nBreach,nDue,nIn], ref:ref(1,sec1.r0+1,sec1.r0+3), color:C.teal }] });
+
+  const bucketNames=["0–7","8–30","31–60","61–90","90+"];
+  const bk=bucketNames.map(b=>open.filter(f=>f.bucket===b).length);
+  const sec2=section("Ageing of open findings",["Age, days","Findings","Past SLA"],
+    bucketNames.map((b,i)=>[b, bk[i], breachCell(open.filter(f=>f.bucket===b&&f.slaStatus==="Breached").length)]));
+  chart(sec2,{ title:"Ageing of open findings", dir:"col", cats:bucketNames, catRef:ref(0,sec2.r0,sec2.r1),
+    series:[{ name:"Findings", nameRef:hdr(1,sec2), vals:bk, ref:ref(1,sec2.r0,sec2.r1), color:C.teal }] });
+
+  const sevOrder=["Critical","High","Medium","Low","Info"];
+  const sev={}; open.forEach(f=>{ const s=f.severity||"Not stated"; const o=sev[s]||(sev[s]={ s, open:0, breach:0 }); o.open++; if(f.slaStatus==="Breached") o.breach++; });
+  const sevList=Object.values(sev).sort((a,b)=>{ const i=sevOrder.indexOf(a.s), j=sevOrder.indexOf(b.s); return (i<0?99:i)-(j<0?99:j); });
+  if(sevList.length){
+    const sec3=section("Open findings by severity",["Severity","Open","Past SLA"],sevList.map(o=>[o.s,o.open,breachCell(o.breach)]));
+    chart(sec3,{ title:"Open findings by severity", dir:"col", cats:sevList.map(o=>o.s), catRef:ref(0,sec3.r0,sec3.r1),
+      series:[{ name:"Open", nameRef:hdr(1,sec3), vals:sevList.map(o=>o.open), ref:ref(1,sec3.r0,sec3.r1), color:C.teal },
+              { name:"Past SLA", nameRef:hdr(2,sec3), vals:sevList.map(o=>o.breach), ref:ref(2,sec3.r0,sec3.r1), color:C.red }] });
+  }
+
+  if(hasInv){
+    const missing=cov.notScannedNow.length-cov.neverScanned.length;
+    const sec4=section("Scan coverage",["Measure","Hosts"],[
+      ["Hosts in inventory",cov.inventoryCount],
+      ["Inventory scanned in this run",{ v:cov.pct/100, s:ST.pct }],
+      ["Scanned in this run",cov.scannedNow],
+      ["Missing from this run, scanned before",missing],
+      ["Never scanned",cov.neverScanned.length],
+      ["Scanned but not inventoried",cov.notInventoried.length]
+    ]);
+    // chart categories are read from the cells above, so those labels stay short
+    chart(sec4,{ title:"Scan coverage, hosts", dir:"col", cats:["Scanned in this run","Missing from this run, scanned before","Never scanned","Scanned but not inventoried"],
+      catRef:ref(0,sec4.r0+2,sec4.r0+5), pointColors:[C.green,C.amber,C.red,C.grey],
+      series:[{ name:"Hosts", nameRef:hdr(1,sec4), vals:[cov.scannedNow,missing,cov.neverScanned.length,cov.notInventoried.length], ref:ref(1,sec4.r0+2,sec4.r0+5), color:C.teal }] });
+  }
+
+  for(const [key,label] of mappedDims()){
+    const by={};
+    open.forEach(f=>{ const g=f[key]||"(not recorded)";
+      const o=by[g]||(by[g]={ g, hosts:new Set(), open:0, breach:0, oldest:0 });
+      o.hosts.add(lc(f.host)); o.open++; if(f.slaStatus==="Breached") o.breach++; o.oldest=Math.max(o.oldest,f.age); });
+    const list=Object.values(by).sort((a,b)=>b.breach-a.breach||b.open-a.open);
+    if(!list.length) continue;
+    const sec=section("Open findings by "+label.toLowerCase(),[label,"Hosts","Open","Past SLA","Oldest, days"],
+      list.map(o=>[o.g,o.hosts.size,o.open,breachCell(o.breach),o.oldest]));
+    const top=list.slice(0,12), r1=sec.r0+top.length-1;
+    chart(sec,{ title:"Open and past-SLA findings by "+label.toLowerCase()+(list.length>12?" (top 12)":""), dir:"bar",
+      cats:top.map(o=>o.g), catRef:ref(0,sec.r0,r1),
+      series:[{ name:"Open", nameRef:hdr(2,sec), vals:top.map(o=>o.open), ref:ref(2,sec.r0,r1), color:C.teal },
+              { name:"Past SLA", nameRef:hdr(3,sec), vals:top.map(o=>o.breach), ref:ref(3,sec.r0,r1), color:C.red }] });
+  }
+
+  const byRule={};
+  open.forEach(f=>{ const o=byRule[f.ruleId]||(byRule[f.ruleId]={ id:f.ruleId, name:f.ruleName||"", sev:f.severity||"", hosts:0, breach:0 });
+    o.hosts++; if(f.slaStatus==="Breached") o.breach++; if(!o.name&&f.ruleName) o.name=f.ruleName; });
+  const rules=Object.values(byRule).sort((a,b)=>b.breach-a.breach||b.hosts-a.hosts).slice(0,15);
+  if(rules.length){
+    const sec5=section("Rules with the most open findings (top 15)",["Rule ID","Failing","Past SLA","Severity","Rule name"],
+      rules.map(o=>[o.id,o.hosts,breachCell(o.breach),o.sev,o.name]));
+    chart(sec5,{ title:"Rules with the most open findings", dir:"bar", cats:rules.map(o=>o.id), catRef:ref(0,sec5.r0,sec5.r1),
+      series:[{ name:"Failing", nameRef:hdr(1,sec5), vals:rules.map(o=>o.hosts), ref:ref(1,sec5.r0,sec5.r1), color:C.teal },
+              { name:"Past SLA", nameRef:hdr(2,sec5), vals:rules.map(o=>o.breach), ref:ref(2,sec5.r0,sec5.r1), color:C.red }] });
+  }
+
+  const sec6=section("Run history",["Scan date","Run","Hosts","New","Still failing","Remediated","Reopened"],
+    st.runs.map(x=>[x.scanDate, x.id, x.hosts, x.newFindings, x.stillFailing, x.remediated, x.reopened]));
+  chart(sec6,{ title:"Findings opened and remediated per run", dir:"col", cats:st.runs.map(x=>x.scanDate), catRef:ref(0,sec6.r0,sec6.r1),
+    series:[{ name:"New", nameRef:hdr(3,sec6), vals:st.runs.map(x=>x.newFindings), ref:ref(3,sec6.r0,sec6.r1), color:C.teal },
+            { name:"Remediated", nameRef:hdr(5,sec6), vals:st.runs.map(x=>x.remediated), ref:ref(5,sec6.r0,sec6.r1), color:C.green },
+            { name:"Reopened", nameRef:hdr(6,sec6), vals:st.runs.map(x=>x.reopened), ref:ref(6,sec6.r0,sec6.r1), color:C.amber }] });
+
+  put([{ v:"Basis of preparation", s:ST.section }]);
+  const notes=[
+    "The compliance export carries only the latest scan result. First-found dates are maintained by the tracker: a failure is dated from the run in which it first appeared, keeps that date while it persists, and is closed when the rule next passes.",
+    "A finding that fails again after closure starts a new cycle with a new date. The earlier cycle is kept in the tracking file.",
+    "Findings present on the first tracked run are marked baseline and dated from "+st.trackingStart+". Their true age is older than shown.",
+    "Hosts absent from an export are not treated as remediated. Their findings remain open and the hosts are reported under coverage.",
+    run.codedResults ? "Results in the source export are numeric: 0 is read as pass, 1 as warning and 2 as failed." : "",
+    run.warnMode==="ignore" ? "Warnings were excluded from this run at the preparer's direction." : "Warnings are tracked as findings and aged on the same basis as failures; they are labelled separately throughout.",
+    "Corrections (run reversals, removals, inventory reloads) are on the Changes sheet with operator, date and reason. Every mapped export and inventory field is on the Findings sheet."
+  ].filter(Boolean);
+  notes.forEach(n=>put([{ v:n, s:ST.muted }]));
+
+  return { name:"Dashboard", rows, charts, gridlines:false, tab:true,
+    widths:[46,16,14,14,14,14,14,3,10,10,10,10,10,10,10,10,10,10] };
+}
+async function buildWorkbook(){
+  const st=S.state, run=st.runs[st.runs.length-1];
+  if(!run){ msg("exportMsg","Load a run first.","err"); return; }
+  msg("exportMsg","Building the workbook…","warn");
+  try{
+    const sheets=[ dashboardSheet(),
+      dataSheet("Findings","Findings",findingRows()),
+      dataSheet("Coverage","Coverage",coverageRows()),
+      dataSheet("Runs","RunLog",runRows()),
+      dataSheet("Changes","ChangeLog",changeRows()) ];
+    const blob=await xlsxBlob(sheets,{ title:"Middleware compliance — "+run.scanDate, creator:run.operator });
+    download("middleware-compliance-"+run.scanDate+".xlsx", blob, CT_SS+"sheet");
+    msg("exportMsg","Workbook built for run "+run.id+" ("+run.scanDate+"): dashboard, findings, coverage, runs and change log.","good");
+  }catch(e){ msg("exportMsg","Could not build the workbook: "+e.message,"err"); }
 }
 
 /* ============================ final report ============================ */
@@ -1137,6 +1622,9 @@ function finalReport(){
   if(!run){ msg("exportMsg","Load a run first.","err"); return; }
   const all=enrich(), open=all.filter(f=>f.state==="open");
   const cov=coverage(), hasInv=!!st.inventory;
+  const dims=tableDims(), hasInst=anyInstance();
+  const hostHead=["Host"].concat(hasInst?["Instance"]:[]).concat(dims.map(d=>d[2]));
+  const hostCells=f=>[f.host].concat(hasInst?[f.instance||""]:[]).concat(dims.map(d=>f[d[0]]||""));
   const breach=open.filter(f=>f.slaStatus==="Breached").sort((a,b)=>b.age-a.age);
   const closedThisRun=all.filter(f=>f.remediatedOn===run.scanDate);
   const newThisRun=open.filter(f=>f.openedInRun===run.id);
@@ -1203,27 +1691,26 @@ function finalReport(){
       ["Scanned but not inventoried",cov.notInventoried.length]
     ])+
     (cov.neverScanned.length?'<h3>Hosts never scanned</h3>'+
-      t(["Host","Owner","Application"],cov.neverScanned.sort().map(h=>[h,invAttr(h,"owner"),invAttr(h,"app")])):'')+
+      t(["Host"].concat(dims.map(d=>d[2])),cov.neverScanned.sort().map(h=>[h].concat(dims.map(d=>invAttr(h,d[0]))))):'')+
     (cov.notInventoried.length?'<h3>Scanned but not in the inventory</h3>'+
       t(["Host"],cov.notInventoried.sort().map(h=>[h])):'')
   :'')+
   '<h2>Ageing of open findings</h2>'+
   t(["Age, days","Findings"],buckets.map(b=>[b.b,b.n]))+
   t(["Severity","Open findings"],sevRows)+
-  (hasInv?'<h2>Open findings by owner</h2>'+t(["Owner or support group","Hosts","Open","Past SLA"],groupRows("owner"))+
-    '<h2>Open findings by application</h2>'+t(["Application or service","Hosts","Open","Past SLA"],groupRows("app")):'')+
+  mappedDims().map(d=>'<h2>Open findings by '+esc(d[1].toLowerCase())+'</h2>'+t([d[1],"Hosts","Open","Past SLA"],groupRows(d[0]))).join("")+
   '<h2>Findings past SLA</h2>'+
-  (breach.length? t(["Host"].concat(hasInv?["Owner","Application"]:[]).concat(["Rule ID","Rule name","Severity","First found","Age","Days over"]),
-    breach.map(f=>[f.host].concat(hasInv?[f.owner,f.app]:[])
+  (breach.length? t(hostHead.concat(["Rule ID","Rule name","Severity","First found","Age","Days over"]),
+    breach.map(f=>hostCells(f)
       .concat([f.ruleId,f.ruleName||"",f.severity||"",f.firstFound+(f.baseline?" (baseline)":""),f.age,f.over])))
     : '<p>No open finding has exceeded the remediation SLA.</p>')+
   '<h2>All open findings</h2>'+
-  t(["Host"].concat(hasInv?["Owner","Application"]:[]).concat(["Rule ID","Rule name","Result","Severity","First found","Age","SLA status"]),
-    open.sort((a,b)=>b.age-a.age).map(f=>[f.host].concat(hasInv?[f.owner,f.app]:[])
+  t(hostHead.concat(["Rule ID","Rule name","Result","Severity","First found","Age","SLA status"]),
+    open.sort((a,b)=>b.age-a.age).map(f=>hostCells(f)
       .concat([f.ruleId,f.ruleName||"",f.kind,f.severity||"",f.firstFound+(f.baseline?" (baseline)":""),f.age,f.slaStatus])))+
   (closedThisRun.length?'<h2>Remediated in this run</h2>'+
-    t(["Host","Rule ID","Rule name","First found","Closed","Days open"],
-      closedThisRun.map(f=>[f.host,f.ruleId,f.ruleName||"",f.firstFound,f.remediatedOn,f.age])):'')+
+    t(["Host"].concat(hasInst?["Instance"]:[]).concat(["Rule ID","Rule name","First found","Closed","Days open"]),
+      closedThisRun.map(f=>[f.host].concat(hasInst?[f.instance||""]:[]).concat([f.ruleId,f.ruleName||"",f.firstFound,f.remediatedOn,f.age]))):'')+
   '<h2>Basis of preparation</h2>'+
   '<p>The compliance export carries only the latest scan result. First-found dates are maintained separately by the tracker: a failure is dated from the run in which it first appeared, keeps that date while it persists, and is closed when the rule next passes. A finding that fails again after closure starts a new cycle with a new date.</p>'+
   (run.codedResults?'<p>Results in the source export are numeric: 0 is read as pass, 1 as warning and 2 as failed. '+
@@ -1380,13 +1867,8 @@ $("btnSaveState").onclick=async()=>{
   download("compliance-tracking.json",text,"application/json");
 };
 $("btnReport").onclick=finalReport;
-$("btnCsvFindings").onclick=()=>download("findings-"+todayISO()+".csv",findingsSheet(),"text/csv");
-$("btnCsvCoverage").onclick=()=>download("coverage-"+todayISO()+".csv",coverageSheet(),"text/csv");
-$("btnCsvRuns").onclick=()=>{
-  const head=["Run","Ran At","Scan Date","Run By","Source File","Inventory","Rows","Hosts","New","Still Failing","Remediated","Reopened","Ignored","SLA Days"];
-  download("run-log-"+todayISO()+".csv", csv([head].concat(S.state.runs.map(r=>[r.id,r.ranAt,r.scanDate,r.operator,r.source,
-    r.inventorySource||"",r.rows,r.hosts,r.newFindings,r.stillFailing,r.remediated,r.reopened,r.unreadable||0,r.slaDays]))),"text/csv");
-};
+$("btnXlsx").onclick=buildWorkbook;
+$("btnCsvFindings").onclick=()=>download("findings-"+todayISO()+".csv",csv(flatRows(findingRows())),"text/csv");
 $("tabs").onclick=e=>{
   const b=e.target.closest(".tab"); if(!b) return;
   S.tab=b.dataset.tab;
